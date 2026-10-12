@@ -4,7 +4,12 @@
 !.env.example
 .aws/
 
+# Claude Code local state (settings.json is shared; these are per machine)
+.claude/settings.local.json
+.claude/review_state.json
+
 # Python
+.ruff_cache/
 .venv/
 __pycache__/
 *.pyc
