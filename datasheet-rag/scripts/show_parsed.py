@@ -12,14 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rag import parse
 
 MAX_WIDTH = 26  # longer cells are shortened with "..." unless --full is given
-MERGED = "^"    # shown for a cell that is merged with the one above it or to its left
+MERGED = "^"       # shown for a cell that is merged with the one above it or to its left
+EMPTY = "(blank)"  # shown for a cell that is empty in the PDF; a printed "-" is a real dash
 
 
 def show(cell: str | None, full: bool) -> str:
     if cell is None:
         return MERGED
     if cell == "":
-        return "-"
+        return EMPTY
     return cell if full or len(cell) <= MAX_WIDTH else cell[: MAX_WIDTH - 3] + "..."
 
 
@@ -49,7 +50,7 @@ def main() -> None:
     for table in page["tables"]:
         print(f"\nTable {table['index'] + 1} of {len(page['tables'])}: {table['caption']}")
         print_table(table["rows"], "--full" in sys.argv)
-    print(f"\nKey:  {MERGED} = merged with the cell above or to the left     - = empty in the PDF")
+    print(f"\nKey:  {MERGED} = merged with the cell above or to the left     {EMPTY} = empty in the PDF")
     if "--full" in sys.argv:
         print("\nText outside tables:\n" + page["text_outside_tables"])
 

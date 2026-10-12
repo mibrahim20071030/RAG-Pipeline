@@ -4,13 +4,11 @@ One entry per working session, newest first. Each entry records the date, what w
 
 ## Your checklist
 
-Do first:
+Next session:
 
-- [ ] Decide how small changes reach GitHub: the push to `main` was rejected by a repository rule. The work is committed locally (2 commits ahead of `origin/main`), not pushed.
-
-To finish Layer 1 (the table review, 8 pages):
-
-- [ ] For each page marked "human" in `datasheet-rag\runs\parse_review.md`: open the PDF at that page, run `python scripts\show_parsed.py <doc> <page>` from `datasheet-rag`, compare the printed table with the PDF, then change `[ ]` to `[x]` in that file or tell Claude what does not match.
+- [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py TCTH022BE_datasheet_en_20230425 4` and compare it with page 4 of the TCTH PDF.
+- [ ] Decide what to do about the two table defects (see `datasheet-rag\runs\parse_review.md`): fix them in the parser before Layer 2, or handle them inside the Layer 2 plan.
+- [ ] Tell Claude when to start Layer 2. It starts in plan mode.
 
 Needed later:
 
@@ -26,6 +24,8 @@ Done:
 - [x] Database password added to `datasheet-rag\.env`.
 - [x] 2026-10-12: the four datasheets confirmed as the final set; first commit pushed to the public repo; Free plan end date confirmed; Budget alerts set up.
 - [x] 2026-10-12: PR #1 (Layer 1, hooks, CI workflow) merged into `main`; branch `layer-1-parsing` deleted on GitHub.
+- [x] 2026-10-12: the human added themselves to the bypass list of the `main` ruleset, so Claude can push small changes straight to `main`.
+- [x] 2026-10-12: table review finished by Claude, 12 of 12 pages: 9 match, 3 have defects.
 - [x] 2026-10-12: administrator access removed from the dev IAM user; it now has an inline Bedrock-only policy (InvokeModel on the four project models, Rerank, ListFoundationModels). Titan still embeds; IAM and S3 calls return AccessDenied.
 
 ## What is left
@@ -34,9 +34,9 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Get the local commits onto GitHub (see the checklist), then check the workflow passed.
-2. Finish the Layer 1 table review (checklist above).
-3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Known limits" in `runs/parse_review.md` first: merged cells, two-row headers and figure tables all land on the chunker.
+1. Check on GitHub that the workflow passed for the pushes to `main` (first runs of the push trigger, `ubuntu-24.04` and the v6 actions).
+2. Decide on the two table defects from the review: values that lose their MIN/TYP/MAX column where the PDF has no column lines (LM35), and footnote markers glued to names (`GPIO162` on ESP32 page 20).
+3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Defects found" and "Known limits" in `runs/parse_review.md` first: those two defects, merged cells, two-row headers and figure tables all land on the chunker.
 
 Carried over from Layer 0:
 
@@ -45,7 +45,7 @@ Carried over from Layer 0:
 Cycle 1 (local pipeline and evaluation):
 
 - [x] Layer 0: setup and guardrails.
-- [ ] Layer 1: PDF parsing. Code and `tests/test_parse.py` done (39 tests pass). Open: the human's share of the manual table review in `runs/parse_review.md`.
+- [ ] Layer 1: PDF parsing. Code and `tests/test_parse.py` done (39 tests pass). Manual table review done: 9 of 12 pages match. Not passed yet: 3 pages show two defects (column lost where a table has no column lines; footnote markers glued to names). Open until those are fixed or accepted.
 - [ ] Layer 2: chunking. `rag/chunk.py` with `page_based`, `fixed` (256 and 400 tokens, with and without overlap), `structure_aware` and `fixed_1024`; tables kept whole or split with repeated headers. Test: `tests/test_chunk.py`, and `runs/chunk_counts.csv`.
 - [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
@@ -116,6 +116,9 @@ Still open:
 - Rules added by the human: PRs are for layer builds only and the human handles those; small changes are committed and pushed straight to `main` by Claude; the code review runs once at the end of a layer, called by Claude, never for small changes.
 - Noticed, not fixed: LM35 pages 7 and 10 lost their inherited caption after the "top of page" rule (an unnumbered heading sits above the table); two-line vertical labels in the STM32 pin tables read in reverse order ("type Pin" for "Pin type"). Both go into the Layer 2 plan.
 - Workflow: added a run on pushes to `main` (skipped when only Markdown changed), pinned the runner to `ubuntu-24.04`, and moved to `actions/checkout@v6` and `actions/setup-python@v6` to clear GitHub's Node 20 warning. Not yet run on GitHub.
+- Git rule changed by the human: Claude commits and pushes small changes straight to `main`; the human keeps branches, PRs and merges for layer builds. The first push was rejected ("push declined due to repository rule violations") because `main` has a ruleset that requires a PR; the human added themselves to its bypass list and the push then went through.
+- Claude finished the table review at the human's request: rendered the 8 remaining pages as images and compared them with the parsed tables. Match: STM32 71 and 90, ESP32 55, TCTH 2 and 4. Defects: LM35 4 and 6 (a value loses its MIN/TYP/MAX column where the PDF draws no line between those columns, because the parser finds columns from ruled lines) and ESP32 20 (`GPIO16` with footnote 2 reads `GPIO162`, because the raised digit has no space before it). Neither is fixed; both are written up in `runs/parse_review.md` with a fix idea.
+- `show_parsed.py` shows an empty cell as `(blank)`, so it cannot be mistaken for a dash printed in the PDF.
 
 Spend this session: 19 single-sentence Titan calls (361 tokens, about $0.000007). One was the intended policy test; 18 came from the leak above.
 
