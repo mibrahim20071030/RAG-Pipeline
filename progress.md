@@ -4,15 +4,13 @@ One entry per working session, newest first. Each entry records the date, what w
 
 ## Your checklist
 
-Hooks (do first):
+Do first:
 
-- [ ] In Claude Code, open `/hooks` once (or restart) so the new Stop hook is loaded.
-- [ ] Create a branch, commit, open a PR and merge it. The pre-commit hook runs on the commit. Use `git add --chmod=+x .githooks/pre-commit` so the hook also runs on Linux and macOS clones.
-- [ ] Tell Claude when the PR is merged, so the progress-log hook can be added.
+- [x] 2026-10-12: progress-log hook, split-header fix, new `show_parsed.py` output and workflow update committed and pushed to `main` by Claude.
 
-To finish Layer 1:
+To finish Layer 1 (the table review, 8 pages):
 
-- [ ] Check the 8 remaining table pages listed in `datasheet-rag\runs\parse_review.md` beside the PDF (2 per datasheet), using `python scripts\show_parsed.py <doc> <page>`, and tick them off in that file.
+- [ ] For each page marked "human" in `datasheet-rag\runs\parse_review.md`: open the PDF at that page, run `python scripts\show_parsed.py <doc> <page>` from `datasheet-rag`, compare the printed table with the PDF, then change `[ ]` to `[x]` in that file or tell Claude what does not match.
 
 Needed later:
 
@@ -27,6 +25,7 @@ Done:
 - [x] IAM user created and access key saved in `~\.aws\credentials`.
 - [x] Database password added to `datasheet-rag\.env`.
 - [x] 2026-10-12: the four datasheets confirmed as the final set; first commit pushed to the public repo; Free plan end date confirmed; Budget alerts set up.
+- [x] 2026-10-12: PR #1 (Layer 1, hooks, CI workflow) merged into `main`; branch `layer-1-parsing` deleted on GitHub.
 - [x] 2026-10-12: administrator access removed from the dev IAM user; it now has an inline Bedrock-only policy (InvokeModel on the four project models, Rerank, ListFoundationModels). Titan still embeds; IAM and S3 calls return AccessDenied.
 
 ## What is left
@@ -35,7 +34,7 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Add the progress-log hook once the hooks PR is merged.
+1. Check that the workflow passed on GitHub for the push to `main`.
 2. Finish the Layer 1 table review (checklist above).
 3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Known limits" in `runs/parse_review.md` first: merged cells, two-row headers and figure tables all land on the chunker.
 
@@ -46,7 +45,7 @@ Carried over from Layer 0:
 Cycle 1 (local pipeline and evaluation):
 
 - [x] Layer 0: setup and guardrails.
-- [ ] Layer 1: PDF parsing. Code and `tests/test_parse.py` done (38 tests pass). Open: the human's share of the manual table review in `runs/parse_review.md`.
+- [ ] Layer 1: PDF parsing. Code and `tests/test_parse.py` done (39 tests pass). Open: the human's share of the manual table review in `runs/parse_review.md`.
 - [ ] Layer 2: chunking. `rag/chunk.py` with `page_based`, `fixed` (256 and 400 tokens, with and without overlap), `structure_aware` and `fixed_1024`; tables kept whole or split with repeated headers. Test: `tests/test_chunk.py`, and `runs/chunk_counts.csv`.
 - [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
@@ -112,6 +111,11 @@ Still open:
 - Added `.github/workflows/tests.yml`: on pull requests into `main` it installs the dependencies and runs ruff and pytest the way `tools/checks.py` does. On GitHub 14 tests run and the 6 datasheet tests skip (the PDFs are not in git).
 - Found and fixed a paid-call leak: `pytest -q` was collecting `scripts/test_embed.py` because of its name and running it on import, so every test run (and every hook run) made a real Titan call. Added `pytest.ini` (`testpaths = tests`) and a `__main__` guard in the script.
 - Second code review (10 findings, none on the workflow). Fixed 2 in `tools/checks.py`: a failed git command now fails the secret scan instead of passing with nothing scanned, and deleted files count as changes; the scan also catches a Postgres connection URL that has a password in it. The other 8 are parser heuristics and hook limits, left open and listed under "Still open".
+- After PR #1 was merged, added the progress-log hook: `tools/progress_gate.py` as a second Stop hook. It sends Claude back to write or update today's entry in this file when files have changed and the log has no entry for today or is older than the latest change. Tested for each case. It was not given a code review: it is a small tooling change, not a layer.
+- The human started the table review and found a split header on LM35 page 6 ("TEST CONDI" | "TIONS"). What: one header cell came out as two. Why: the header spans two columns, but the table was detected with a border through it, so the word was cut there. Fix: `rejoin_split_cells` in `rag/parse.py` reads two cells as one when a word crosses their border. It repaired the same fault on LM35 pages 4, 7, 8, 9 and 10 and dropped four graph grids that had been kept as tables (259 tables now, 39 tests). `scripts/show_parsed.py` now prints an aligned grid with a key (`^` merged, `-` empty).
+- Rules added by the human: PRs are for layer builds only and the human handles those; small changes are committed and pushed straight to `main` by Claude; the code review runs once at the end of a layer, called by Claude, never for small changes.
+- Noticed, not fixed: LM35 pages 7 and 10 lost their inherited caption after the "top of page" rule (an unnumbered heading sits above the table); two-line vertical labels in the STM32 pin tables read in reverse order ("type Pin" for "Pin type"). Both go into the Layer 2 plan.
+- Workflow: added a run on pushes to `main` (skipped when only Markdown changed), pinned the runner to `ubuntu-24.04`, and moved to `actions/checkout@v6` and `actions/setup-python@v6` to clear GitHub's Node 20 warning. Not yet run on GitHub.
 
 Spend this session: 19 single-sentence Titan calls (361 tokens, about $0.000007). One was the intended policy test; 18 came from the leak above.
 

@@ -3,18 +3,24 @@ name: tests
 on:
   pull_request:
     branches: [main]
+  # Small changes are pushed straight to main with no PR. Run for those too,
+  # unless the push only touches Markdown files.
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
 
 permissions:
   contents: read
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # Pinned so a new runner image cannot change the result on its own. Bump by hand.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
           cache: pip

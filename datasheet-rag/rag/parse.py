@@ -27,6 +27,9 @@ BOTTOM_BAND = 0.88
 MIN_REPEAT_PAGES = 3
 SAME_HEIGHT = 0.02
 
+# A word must reach this many points past a cell border on both sides to count as cut by it.
+SPLIT_WORD_MARGIN = 2
+
 # Above this share of image-only pages the file is treated as scanned.
 SCANNED_SHARE = 0.2
 
@@ -144,10 +147,52 @@ def is_data_table(rows: list[list[str | None]]) -> bool:
     return filled_rows >= 2
 
 
+def rejoin_split_cells(page, found, raw: list[list[str | None]], kwargs: dict) -> int:
+    """Put back together a cell that was cut in two through the middle of a word.
+
+    A header that spans two columns ('TEST CONDITIONS') can be detected as two cells, which
+    cuts the word where the column line would be ('TEST CONDI' | 'TIONS'). When a word
+    crosses the border between two neighbouring cells, the two are read as one cell and
+    the right one becomes a merged-cell marker (None). Returns how many were rejoined.
+    """
+    words = [w for w in page.extract_words(**kwargs) if w["upright"]]
+
+    def word_crosses(border: float, top: float, bottom: float) -> bool:
+        return any(
+            w["x0"] < border - SPLIT_WORD_MARGIN and w["x1"] > border + SPLIT_WORD_MARGIN
+            and top <= (w["top"] + w["bottom"]) / 2 <= bottom
+            for w in words
+        )
+
+    rejoined = 0
+    for r, row in enumerate(found.rows):
+        cells = row.cells
+        i = 0
+        while i < len(cells) - 1:
+            if cells[i] is None:
+                i += 1
+                continue
+            x0, top, x1, bottom = cells[i]
+            j = i + 1
+            # Keep taking the next cell while a word runs across the border into it.
+            while j < len(cells) and cells[j] is not None and word_crosses(x1, top, bottom):
+                x1 = cells[j][2]
+                raw[r][j] = None
+                j += 1
+            if j > i + 1:
+                box = [x0, top, x1, bottom]
+                joined = page.filter(lambda obj, box=box: obj["object_type"] == "char" and _inside(obj, [box]))
+                raw[r][i] = joined.extract_text(**kwargs)
+                rejoined += 1
+            i = j
+    return rejoined
+
+
 def extract_tables(page, kwargs: dict) -> list[dict]:
     tables = []
     for found in page.find_tables():
         raw = found.extract(**kwargs)
+        rejoin_split_cells(page, found, raw, kwargs)
         if any(c and FIGURE_RE.search(c) for r in raw for c in r):
             continue
         rows = [[clean_cell(c) for c in r] for r in raw]

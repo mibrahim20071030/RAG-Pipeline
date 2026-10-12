@@ -90,6 +90,15 @@ def test_table_text_is_also_in_page_text(pdf, parsed_docs):
             assert page["text_outside_tables"] == page["text"]
 
 
+@pytest.mark.skipif(not (config.PDF_DIR / "lm35.pdf").exists(), reason="lm35.pdf not in data/pdfs")
+def test_header_cut_through_a_word_is_rejoined(parsed_docs):
+    """LM35 pages 6 and 8: 'TEST CONDI' | 'TIONS' and 'L' | 'M35C, LM3' | '5D' were split cells."""
+    pages = parsed_docs["lm35.pdf"]["pages"]
+    assert "TEST CONDITIONS" in pages[5]["tables"][0]["rows"][0]
+    headers = [cell for page in pages[3:10] for table in page["tables"] for cell in table["rows"][0] if cell]
+    assert not any(cell in ("TEST CONDI", "TIONS", "INS") for cell in headers)
+
+
 # --- helpers, no PDF needed --------------------------------------------------
 
 def test_repeated_header_and_footer_are_flagged():
