@@ -27,8 +27,22 @@ BOTTOM_BAND = 0.88
 MIN_REPEAT_PAGES = 3
 SAME_HEIGHT = 0.02
 
+# A small char whose middle sits this share of the base char's size above the base char's
+# middle is a superscript. Measured: footnote markers sit about 0.33 above, subscripts below.
+RAISED_SHARE = 0.15
+MARKER_CHARS = set("0123456789,")
+# A letter or digit this close after a raised number (as a share of the font size) belongs
+# to the same name, as in I²C.
+INSIDE_NAME_GAP = 0.25
+# One number sitting this close (points) to the middle of a wide cell is centred in a truly
+# merged cell and applies to every column under it, so it is not moved to one column.
+CENTRED_WITHIN = 3
+
 # A word must reach this many points past a cell border on both sides to count as cut by it.
 SPLIT_WORD_MARGIN = 2
+
+# A bare number or a lone dash: what a value cell holds. Used to tell values from wording.
+NUMBER_RE = re.compile(r"^[±+\-–<>≤≥~]?\d[\d.,]*%?$|^[—–-]$")
 
 # Above this share of image-only pages the file is treated as scanned.
 SCANNED_SHARE = 0.2
@@ -95,21 +109,58 @@ def snap_scripts(page) -> int:
     """
     base = last = None
     moved = 0
+    marker: list[dict] = []  # the raised chars seen in a row, for example the 2 of GPIO16²
+    before: list[str] = []   # text of the chars so far (markers left out), to see what a marker follows
+
+    def close_marker(following: dict | None) -> None:
+        # A raised number is a footnote marker. Written inline it would change the
+        # name or value before it (GPIO16² -> GPIO162), so it is bracketed: GPIO16[2].
+        # Left alone: a marker with its own brackets, such as (1), and a raised number
+        # inside a name (I²C, where a letter follows it directly).
+        # After a bare 10 it is an exponent and is written 10^6.
+        is_number = marker and all(ch["text"] in MARKER_CHARS for ch in marker) and any(ch["text"].isdigit() for ch in marker)
+        inside_name = (
+            following is not None and following["text"].isalnum() and base is not None
+            and -1 <= following["x0"] - marker[-1]["x1"] < INSIDE_NAME_GAP * base["size"]
+            and min(following["bottom"], base["bottom"]) > max(following["top"], base["top"])
+        ) if marker else False
+        if is_number and not inside_name:
+            power_of_ten = before[-2:] == ["1", "0"] and not (len(before) > 2 and (before[-3].isdigit() or before[-3] == "."))
+            if power_of_ten:
+                marker[0]["text"] = "^" + marker[0]["text"]
+            else:
+                marker[0]["text"] = "[" + marker[0]["text"]
+                marker[-1]["text"] += "]"
+        if not is_number:
+            before.extend(ch["text"] for ch in marker)
+        marker.clear()
+
     for c in page.chars:
         if not c.get("upright", True):
+            close_marker(None)
             base = last = None
+            before.clear()
             continue
         if base is not None and c["size"] <= SCRIPT_SIZE_RATIO * base["size"]:
             overlap = min(c["bottom"], base["bottom"]) - max(c["top"], base["top"])
             gap = c["x0"] - last["x1"]
             if overlap > 0 and -1 <= gap <= base["size"]:
+                rise = ((base["top"] + base["bottom"]) - (c["top"] + c["bottom"])) / 2
+                if rise > RAISED_SHARE * base["size"]:
+                    marker.append(c)
+                else:
+                    close_marker(None)
+                    before.append(c["text"])
                 if abs(c["bottom"] - base["bottom"]) > 0.01:
                     moved += 1
                 c["doctop"] += base["top"] - c["top"]
                 c["top"], c["bottom"] = base["top"], base["bottom"]
                 last = c
                 continue
+        close_marker(c)
         base = last = c
+        before.append(c["text"])
+    close_marker(None)
     return moved
 
 
@@ -188,11 +239,74 @@ def rejoin_split_cells(page, found, raw: list[list[str | None]], kwargs: dict) -
     return rejoined
 
 
+def split_values_by_column(page, found, raw: list[list[str | None]], kwargs: dict) -> int:
+    """Give each number its own column where the PDF draws no line between value columns.
+
+    Columns are found from ruled lines. Some tables rule the header (MIN | TYP | MAX) but
+    not the rows below, so a row's values share one wide cell and it is no longer known
+    which is MIN and which is MAX. A wide cell is split when (a) a row above it has
+    separate filled cells in the columns it covers, and (b) it holds only numbers on one
+    line. Each number then goes to the column it sits under. Wording is never split.
+    Returns how many cells were split.
+    """
+    rows = found.rows
+    width = max(len(row.cells) for row in rows)
+    edges: list[float | None] = [None] * width  # left edge of each column
+    for row in rows:
+        for i, cell in enumerate(row.cells):
+            if cell is not None and edges[i] is None:
+                edges[i] = cell[0]
+    if any(edge is None for edge in edges):
+        return 0
+    edges.append(found.bbox[2])
+    words = [w for w in page.extract_words(**kwargs) if w["upright"]]
+
+    split = 0
+    for r, row in enumerate(rows):
+        for i, cell in enumerate(row.cells):
+            if cell is None or not raw[r][i]:
+                continue
+            last = i
+            while last + 1 < width and edges[last + 2] <= cell[2] + 1:
+                last += 1
+            covered = range(i, last + 1)
+            if last == i or not _has_separate_cells_above(rows, raw, r, covered):
+                continue
+            inside = [
+                w for w in words
+                if cell[0] <= (w["x0"] + w["x1"]) / 2 <= cell[2] and cell[1] <= (w["top"] + w["bottom"]) / 2 <= cell[3]
+            ]
+            one_line = inside and max(w["top"] for w in inside) - min(w["top"] for w in inside) <= 2
+            if not one_line or not all(NUMBER_RE.match(clean_text(w["text"])) for w in inside):
+                continue
+            if len(inside) == 1:
+                off_centre = abs((inside[0]["x0"] + inside[0]["x1"]) / 2 - (cell[0] + cell[2]) / 2)
+                if off_centre <= CENTRED_WITHIN:
+                    continue
+            parts: dict[int, list[str]] = {c: [] for c in covered}
+            for w in sorted(inside, key=lambda w: w["x0"]):
+                middle = (w["x0"] + w["x1"]) / 2
+                column = next((c for c in covered if edges[c] <= middle < edges[c + 1]), last)
+                parts[column].append(w["text"])
+            for c in covered:
+                raw[r][c] = " ".join(parts[c])
+            split += 1
+    return split
+
+
+def _has_separate_cells_above(rows, raw: list[list[str | None]], r: int, covered: range) -> bool:
+    return any(
+        sum(1 for c in covered if rows[above].cells[c] is not None and raw[above][c]) >= 2
+        for above in range(r)
+    )
+
+
 def extract_tables(page, kwargs: dict) -> list[dict]:
     tables = []
     for found in page.find_tables():
         raw = found.extract(**kwargs)
         rejoin_split_cells(page, found, raw, kwargs)
+        split_values_by_column(page, found, raw, kwargs)
         if any(c and FIGURE_RE.search(c) for r in raw for c in r):
             continue
         rows = [[clean_cell(c) for c in r] for r in raw]

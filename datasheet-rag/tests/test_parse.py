@@ -99,6 +99,74 @@ def test_header_cut_through_a_word_is_rejoined(parsed_docs):
     assert not any(cell in ("TEST CONDI", "TIONS", "INS") for cell in headers)
 
 
+@pytest.mark.skipif(not (config.PDF_DIR / "lm35.pdf").exists(), reason="lm35.pdf not in data/pdfs")
+def test_values_get_their_own_column_where_the_pdf_has_no_column_lines(parsed_docs):
+    """LM35 page 4 (MIN | MAX) and page 6 (MIN | TYP | MAX): rows are not ruled between value columns."""
+    pages = parsed_docs["lm35.pdf"]["pages"]
+    ratings = pages[3]["tables"][0]["rows"]
+    assert ratings[0][-3:] == ["MIN", "MAX", "UNIT"]
+    assert ratings[1][-3:] == ["–0.2", "35", "V"]      # supply voltage
+    assert ratings[3][-3:] == ["", "10", "mA"]         # output current has a MAX only
+    limits = pages[5]["tables"][0]["rows"]
+    assert limits[1][3:9] == ["MIN", "TYP", "MAX", "TYP", "TYP", "MAX"]
+    assert limits[2][3:9] == ["", "±0.2", "", "", "±0.2", ""]   # typical accuracy at 25°C
+    assert limits[3][3:9] == ["", "", "±0.5", "", "", "±0.5"]   # tested limit
+
+
+@pytest.mark.skipif(not (config.PDF_DIR / "esp32_datasheet_en.pdf").exists(), reason="ESP32 PDF not in data/pdfs")
+def test_footnote_marker_is_not_glued_to_a_pin_name(parsed_docs):
+    """ESP32 page 20: GPIO16 with footnote 2 must not read as GPIO162."""
+    cells = [c for row in parsed_docs["esp32_datasheet_en.pdf"]["pages"][19]["tables"][0]["rows"] for c in row]
+    assert "GPIO16[2]" in cells and "VDD_SDIO[1]" in cells
+    assert "GPIO162" not in cells and "VDD_SDIO1" not in cells
+
+
+@pytest.mark.skipif(not (config.PDF_DIR / "DS_CD00237391.pdf").exists(), reason="STM32 PDF not in data/pdfs")
+def test_merged_cells_and_names_are_left_alone(parsed_docs):
+    """STM32: a value centred in a merged cell stays put, and I2C keeps its name."""
+    pages = parsed_docs["DS_CD00237391.pdf"]["pages"]
+    text = " ".join(p["text"] for p in pages)
+    assert "I[2]C" not in text and "I[2]S" not in text and "I2C" in text
+    features = pages[13]["tables"][0]["rows"]
+    gpios = next(row for row in features if row[0] == "GPIOs")
+    assert [c for c in gpios if c] == ["GPIOs", "51", "82", "114"] and gpios[2] == "51"
+
+
+class FakePage:
+    def __init__(self, chars):
+        self.chars = chars
+
+
+def ch(text: str, x0: float, size: float = 10.0, top: float = 100.0) -> dict:
+    return {"text": text, "x0": x0, "x1": x0 + size * 0.55, "top": top, "bottom": top + size,
+            "doctop": top, "size": size, "upright": True}
+
+
+def marked(chars: list[dict]) -> str:
+    parse.snap_scripts(FakePage(chars))
+    return "".join(c["text"] for c in chars)
+
+
+def test_raised_number_becomes_a_bracketed_footnote_marker():
+    chars = [ch("1", 0), ch("6", 5.5), ch("2", 11, size=7, top=98)]
+    assert marked(chars) == "16[2]"
+
+
+def test_subscript_number_is_not_a_footnote_marker():
+    chars = [ch("K", 0), ch("1", 5.5, size=7, top=105)]
+    assert marked(chars) == "K1"
+
+
+def test_raised_number_inside_a_name_is_kept():
+    chars = [ch("I", 0), ch("2", 5.5, size=7, top=98), ch("C", 9.4)]
+    assert marked(chars) == "I2C"
+
+
+def test_raised_number_after_ten_is_a_power():
+    chars = [ch("x", 0), ch("1", 5.5), ch("0", 11), ch("6", 16.5, size=7, top=98)]
+    assert marked(chars) == "x10^6"
+
+
 # --- helpers, no PDF needed --------------------------------------------------
 
 def test_repeated_header_and_footer_are_flagged():

@@ -6,8 +6,7 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Next session:
 
-- [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py TCTH022BE_datasheet_en_20230425 4` and compare it with page 4 of the TCTH PDF.
-- [ ] Decide what to do about the two table defects (see `datasheet-rag\runs\parse_review.md`): fix them in the parser before Layer 2, or handle them inside the Layer 2 plan.
+- [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Tell Claude when to start Layer 2. It starts in plan mode.
 
 Needed later:
@@ -35,7 +34,7 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 Start of next session:
 
 1. Check on GitHub that the workflow passed for the pushes to `main` (first runs of the push trigger, `ubuntu-24.04` and the v6 actions).
-2. Decide on the two table defects from the review: values that lose their MIN/TYP/MAX column where the PDF has no column lines (LM35), and footnote markers glued to names (`GPIO162` on ESP32 page 20).
+2. Optional: spot-check one table page (checklist above).
 3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Defects found" and "Known limits" in `runs/parse_review.md` first: those two defects, merged cells, two-row headers and figure tables all land on the chunker.
 
 Carried over from Layer 0:
@@ -45,7 +44,7 @@ Carried over from Layer 0:
 Cycle 1 (local pipeline and evaluation):
 
 - [x] Layer 0: setup and guardrails.
-- [ ] Layer 1: PDF parsing. Code and `tests/test_parse.py` done (39 tests pass). Manual table review done: 9 of 12 pages match. Not passed yet: 3 pages show two defects (column lost where a table has no column lines; footnote markers glued to names). Open until those are fixed or accepted.
+- [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
 - [ ] Layer 2: chunking. `rag/chunk.py` with `page_based`, `fixed` (256 and 400 tokens, with and without overlap), `structure_aware` and `fixed_1024`; tables kept whole or split with repeated headers. Test: `tests/test_chunk.py`, and `runs/chunk_counts.csv`.
 - [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
@@ -120,7 +119,9 @@ Still open:
 - Claude finished the table review at the human's request: rendered the 8 remaining pages as images and compared them with the parsed tables. Match: STM32 71 and 90, ESP32 55, TCTH 2 and 4. Defects: LM35 4 and 6 (a value loses its MIN/TYP/MAX column where the PDF draws no line between those columns, because the parser finds columns from ruled lines) and ESP32 20 (`GPIO16` with footnote 2 reads `GPIO162`, because the raised digit has no space before it). Neither is fixed; both are written up in `runs/parse_review.md` with a fix idea.
 - `show_parsed.py` shows an empty cell as `(blank)`, so it cannot be mistaken for a dash printed in the PDF.
 
-Spend this session: 19 single-sentence Titan calls (361 tokens, about $0.000007). One was the intended policy test; 18 came from the leak above.
+- Fixed both table defects at the human's request, the same day. (1) Values with no column lines: `split_values_by_column` gives each number the column it sits under (102 LM35 rows on pages 4, 6, 7, 9, 10). (2) Glued footnote markers: a raised number is written in brackets, `GPIO16[2]`. The first version of each fix broke something else, caught by comparing every changed row before and after: centred values in truly merged cells were moved to one column (STM32 features table, TCTH page 2), and I2C became `I[2]C`. Both were corrected (a centred single number is left alone; a raised number followed directly by a letter is part of a name) and each has a test. The three defect pages were re-checked against the page images and now match. 46 tests pass.
+
+Spend this session: 19 single-sentence Titan calls (361 tokens, about $0.000007). One was the intended policy test; 18 came from the pytest leak described above.
 
 ## 2026-10-11 — Session 1: Layer 0 (setup and guardrails)
 
