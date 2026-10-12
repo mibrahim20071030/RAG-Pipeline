@@ -1,6 +1,6 @@
 """Append one row per paid Bedrock call to runs/cost_log.csv."""
 import csv
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rag import config
 
@@ -15,7 +15,7 @@ def log_cost(operation: str, model_id: str, unit: str, quantity: int, est_cost_u
         if is_new:
             writer.writeheader()
         writer.writerow({
-            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
             "operation": operation,
             "model_id": model_id,
             "unit": unit,

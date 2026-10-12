@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/datasheet-rag/.venv/Scripts/python.exe\" \"$CLAUDE_PROJECT_DIR/tools/review_gate.py\"",
+            "timeout": 300,
+            "statusMessage": "Running pre-commit checks and review gate..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+# Linter settings. Run from the repo root: python -m ruff check
+line-length = 130
+src = ["datasheet-rag"]

@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PDF_DIR = ROOT / "data" / "pdfs"
 RUNS_DIR = ROOT / "runs"
 COST_LOG = RUNS_DIR / "cost_log.csv"
+PARSED_DIR = RUNS_DIR / "parsed"
 
 
 def _load_env(path: Path) -> None:

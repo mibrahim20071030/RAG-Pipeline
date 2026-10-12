@@ -17,7 +17,13 @@ def _rows() -> int:
     return max(len(config.COST_LOG.read_text(encoding="utf-8").splitlines()) - 1, 0)
 
 
-before = _rows()
-vector = embed_text("The operating supply voltage range is 3.0 V to 3.6 V.")
-print(len(vector))
-print(f"cost log rows added: {_rows() - before} ({config.COST_LOG})")
+def main() -> None:
+    before = _rows()
+    vector = embed_text("The operating supply voltage range is 3.0 V to 3.6 V.")
+    print(len(vector))
+    print(f"cost log rows added: {_rows() - before} ({config.COST_LOG})")
+
+
+# Guarded so that importing this file (pytest used to collect it by name) never calls Bedrock.
+if __name__ == "__main__":
+    main()
