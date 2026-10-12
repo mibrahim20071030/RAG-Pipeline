@@ -120,6 +120,7 @@ Still open:
 - `show_parsed.py` shows an empty cell as `(blank)`, so it cannot be mistaken for a dash printed in the PDF.
 
 - Fixed both table defects at the human's request, the same day. (1) Values with no column lines: `split_values_by_column` gives each number the column it sits under (102 LM35 rows on pages 4, 6, 7, 9, 10). (2) Glued footnote markers: a raised number is written in brackets, `GPIO16[2]`. The first version of each fix broke something else, caught by comparing every changed row before and after: centred values in truly merged cells were moved to one column (STM32 features table, TCTH page 2), and I2C became `I[2]C`. Both were corrected (a centred single number is left alone; a raised number followed directly by a letter is part of a name) and each has a test. The three defect pages were re-checked against the page images and now match. 46 tests pass.
+- Made a reusable project template at `..\project-template` (next to this project, not in this repo): the hooks, the checks, the two Claude Code Stop hooks, the GitHub workflow, lint and test settings, a `CLAUDE.md` holding the working rules with a marked place for the blueprint, an empty `progress.md` and a `SETUP.md`. Everything specific to this project was removed. Tested on a fresh copy: checks, secret scan, both gates before and after a first commit.
 
 Spend this session: 19 single-sentence Titan calls (361 tokens, about $0.000007). One was the intended policy test; 18 came from the pytest leak described above.
 
