@@ -6,7 +6,7 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Do first:
 
-- [x] 2026-10-12: progress-log hook, split-header fix, new `show_parsed.py` output and workflow update committed and pushed to `main` by Claude.
+- [ ] Decide how small changes reach GitHub: the push to `main` was rejected by a repository rule. The work is committed locally (2 commits ahead of `origin/main`), not pushed.
 
 To finish Layer 1 (the table review, 8 pages):
 
@@ -34,7 +34,7 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Check that the workflow passed on GitHub for the push to `main`.
+1. Get the local commits onto GitHub (see the checklist), then check the workflow passed.
 2. Finish the Layer 1 table review (checklist above).
 3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Known limits" in `runs/parse_review.md` first: merged cells, two-row headers and figure tables all land on the chunker.
 
