@@ -8,7 +8,6 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Layer 4 is built and reviewed (2026-10-13): make the branch, commit, open the PR and merge. Optional look first: from `datasheet-rag`, `python scripts\show_search.py` (free now, the vectors are cached) and `runs\search_review.md`.
 - [ ] Tell Claude when to start Layer 5 (reranking, single agent). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
@@ -30,6 +29,7 @@ Done:
 - [x] 2026-10-13: PR #2 (Layer 2, chunking) merged into `main`; the workflow passed on the PR and on the merge; both layer branches deleted on GitHub.
 - [x] 2026-10-13: parallel builds kept for Layers 4 and 7.
 - [x] 2026-10-13: PR #3 (Layer 3, embeddings and storage) merged into `main`; the branch deleted locally and on GitHub.
+- [x] 2026-10-13: PR #4 (Layer 4, retrieval) merged into `main`; the branch deleted locally and on GitHub.
 - [x] 2026-10-12: administrator access removed from the dev IAM user; it now has an inline Bedrock-only policy (InvokeModel on the four project models, Rerank, ListFoundationModels). Titan still embeds; IAM and S3 calls return AccessDenied.
 
 ## What is left
@@ -52,7 +52,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
-- [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. Waiting for the PR and merge.
+- [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
@@ -72,7 +72,7 @@ Cycle 2 (deploy, UI, report):
 
 ## 2026-10-13 — Session 5: Layer 4 (retrieval), parallel build in progress
 
-Status at the end: Layer 4 is built, reviewed and ready for the human's branch, PR and merge. The full checks pass with 518 tests (350 existing plus 168 in `tests/test_search.py`). The by-eye review is in `runs/search_review.md`. Next is Layer 5, when the human says so.
+Status at the end: Layer 4 is built, reviewed and merged (PR #4, `37b6163`). The full checks pass with 518 tests (350 existing plus 168 in `tests/test_search.py`). The by-eye review is in `runs/search_review.md`. Next is Layer 5, when the human says so.
 
 What we did:
 
@@ -117,7 +117,7 @@ Decisions:
 
 Still open:
 
-- The human's part: branch, commits, PR and merge for Layer 4.
+- Done later the same day: the human merged Layer 4 as PR #4 (`37b6163`) and deleted the branch locally and on GitHub. Local `main` matches `origin/main`.
 - Known keyword limits found on the real data, not fixed in this layer: Postgres keeps `VDD/VBAT` as one token (322 such tokens), so `VDD` does not match it; `STM32F205` as an exact word is in 1 chunk (the datasheet writes `STM32F205xx` and `STM32F20x`), and prefix matching is not used because `GPIO1` would then match `GPIO16`; `-40` is stored as a signed token, so `40` does not match it.
 
 ## 2026-10-13 — Session 4: Layer 3 (embeddings and storage), in progress
