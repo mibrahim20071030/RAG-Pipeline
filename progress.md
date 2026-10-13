@@ -8,7 +8,6 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Layer 3 is ready: make the branch, commit, open the PR and merge. Optional check first, from `datasheet-rag` with the venv active: `python scripts\show_db.py` (must end with "OK").
 - [ ] Optional: in the AWS console, Service Quotas, Amazon Bedrock, look up the Titan Text Embeddings V2 requests-per-minute quota in us-east-1 (the load ran at about 60 a minute).
 - [ ] Tell Claude when to start Layer 4 (parallel build). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
@@ -30,6 +29,7 @@ Done:
 - [x] 2026-10-12: table review finished by Claude, 12 of 12 pages: 9 match, 3 have defects.
 - [x] 2026-10-13: PR #2 (Layer 2, chunking) merged into `main`; the workflow passed on the PR and on the merge; both layer branches deleted on GitHub.
 - [x] 2026-10-13: parallel builds kept for Layers 4 and 7.
+- [x] 2026-10-13: PR #3 (Layer 3, embeddings and storage) merged into `main`; the branch deleted locally and on GitHub.
 - [x] 2026-10-12: administrator access removed from the dev IAM user; it now has an inline Bedrock-only policy (InvokeModel on the four project models, Rerank, ListFoundationModels). Titan still embeds; IAM and S3 calls return AccessDenied.
 
 ## What is left
@@ -51,7 +51,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 0: setup and guardrails.
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
-- [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR by the human still to do.
+- [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
@@ -72,7 +72,7 @@ Cycle 2 (deploy, UI, report):
 
 ## 2026-10-13 — Session 4: Layer 3 (embeddings and storage), in progress
 
-Status at the end: Layer 3 is built, loaded, reviewed and ready for the human's PR. 350 tests pass; 5,501 chunks are stored with vectors; the load cost $0.0173. Next is Layer 4, when the human says so.
+Status at the end: Layer 3 is built, loaded, reviewed and merged (PR #3). 350 tests pass; 5,501 chunks are stored with vectors; the load cost $0.0173. Next is Layer 4, when the human says so.
 
 What we did:
 
@@ -108,7 +108,7 @@ Problems:
 
 Still open:
 
-- The human: branch, commit, PR and merge for Layer 3 (file list in the hand-over).
+- Done later the same day: the human merged Layer 3 as PR #3 (`4d20ab2`) and deleted the branch locally and on GitHub. Local `main` matches `origin/main`.
 - Document ids in `documents` are 1, 8, 22 and 29, not 1 to 4: each repeated upsert uses up a number from the id counter. Harmless; nothing depends on the values.
 - Layer 7: at about 1 Titan call per second, 40 questions take about 40 seconds per run unless question vectors are cached. Decide in the Layer 7 plan.
 - Optional, the human: look up the Titan V2 requests-per-minute quota in Service Quotas to confirm the 60.
