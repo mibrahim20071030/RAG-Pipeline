@@ -76,6 +76,13 @@ PART_ALIASES = {
     "lm35": ("lm35",),
 }
 
+# Reranking. API, model ARN and price checked against the Bedrock docs and pricing page on 2026-10-13.
+RERANK_MODEL_ID = "cohere.rerank-v3-5:0"
+RERANK_ENABLED = True
+RERANK_MAX_DOCS = 100  # documents per call: one billed query covers up to 100
+RERANK_MIN_INTERVAL_S = 20  # seconds between calls: the account's quota is 3 requests a minute
+RERANK_USD_PER_QUERY = 0.002  # $2.00 per 1,000 queries
+
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")
 PG_PORT = int(os.environ.get("PGPORT", "5432"))

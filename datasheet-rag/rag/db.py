@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     embedding   vector({dims}) NOT NULL,
     PRIMARY KEY (text_sha256, model)
 );
+
+CREATE TABLE IF NOT EXISTS rerank_cache (
+    question_sha256 TEXT NOT NULL,
+    text_sha256     TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    score           DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (question_sha256, text_sha256, model)
+);
 """
 
 
@@ -144,6 +152,34 @@ def store_embeddings(conn: psycopg.Connection, model: str, vectors: dict) -> Non
             """
             INSERT INTO embedding_cache (text_sha256, model, embedding) VALUES (%s, %s, %s::vector)
             ON CONFLICT (text_sha256, model) DO UPDATE SET embedding = EXCLUDED.embedding
+            """,
+            rows,
+        )
+
+
+def cached_rerank_scores(conn: psycopg.Connection, question_sha256: str, hashes: list[str],
+                         model: str) -> dict[str, float]:
+    """Stored rerank scores of one question for these text hashes and this model. A hash with no score is left out."""
+    rows = conn.execute(
+        """
+        SELECT text_sha256, score FROM rerank_cache
+        WHERE question_sha256 = %s AND model = %s AND text_sha256 = ANY(%s)
+        """,
+        (question_sha256, model, list(hashes)),
+    ).fetchall()
+    return dict(rows)
+
+
+def store_rerank_scores(conn: psycopg.Connection, question_sha256: str, model: str, scores: dict[str, float]) -> None:
+    """Keep rerank scores that were paid for, keyed by the hashes of the question and of the text that was sent."""
+    rows = [(question_sha256, text_sha256, model, float(score)) for text_sha256, score in scores.items()]
+    if not rows:
+        return
+    with conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO rerank_cache (question_sha256, text_sha256, model, score) VALUES (%s, %s, %s, %s)
+            ON CONFLICT (question_sha256, text_sha256, model) DO UPDATE SET score = EXCLUDED.score
             """,
             rows,
         )
