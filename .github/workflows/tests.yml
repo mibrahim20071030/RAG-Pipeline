@@ -37,7 +37,8 @@ jobs:
         run: python -m ruff check --output-format concise .
 
       # No AWS credentials, database or datasheet PDFs exist here. The tests that read
-      # the PDFs skip themselves; nothing in tests/ calls AWS or Postgres.
+      # the PDFs skip themselves, and so does tests/test_db.py (it needs Postgres).
+      # Nothing in tests/ calls AWS.
       - name: Tests (pytest)
         working-directory: datasheet-rag
         run: python -m pytest -q -rs
