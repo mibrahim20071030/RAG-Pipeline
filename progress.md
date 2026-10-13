@@ -12,8 +12,8 @@ Next session:
 Needed later:
 
 - [ ] Layer 3: start Docker Desktop and run `docker start rag-pg` (the container does not restart on its own).
-- [ ] Layer 5: Cohere Rerank 3.5 is a third-party model and may ask for a use-case form or Marketplace subscription on first use. Check its page in the Bedrock console.
-- [ ] Layer 7: write about 40 questions by hand in `data/questions.jsonl`, reading the datasheets yourself. This is the largest piece of human work in Cycle 1, so it can be started any time.
+- [ ] Layer 5: Cohere Rerank 3.5 access is still unconfirmed (the console check on 2026-10-13 was inconclusive). The first rerank call is the test. If it is refused, the human may need to add Marketplace subscribe permissions to the dev user for a short time, or make the first call from an admin identity.
+- [ ] Layer 7: write about 40 questions in `data/questions.jsonl`, together with Claude, checking each answer against the datasheets.
 
 Done:
 
@@ -39,7 +39,7 @@ Start of next session:
 
 Carried over from Layer 0:
 
-- [ ] Verify the Titan V2 price and update `EMBED_USD_PER_1K_TOKENS` in `rag/config.py` (before Layer 3).
+- [x] Titan V2 price verified on 2026-10-13: $0.02 per 1M input tokens, the same as the value already in `rag/config.py`.
 
 Cycle 1 (local pipeline and evaluation):
 
@@ -64,6 +64,30 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-13 — Session 3: checks before Layer 2
+
+Status so far: no layer work yet. Layer 2 waits for the human's go-ahead.
+
+What we did:
+
+- Confirmed on GitHub that the workflow passed for the three pushes to `main` that triggered it (first runs of the push trigger).
+- Verified the Titan V2 price from the Bedrock pricing page, pasted by the human: $0.02 per 1M input tokens on-demand, $0.01 batch. It matches `EMBED_USD_PER_1K_TOKENS = 0.00002`; only the comment in `rag/config.py` changed.
+- Region: the console opened in Ohio (us-east-2). The console region is only a view; the code sets `us-east-1` in `rag/config.py` and there is no `~\.aws\config` to override it. No regional AWS resource exists yet.
+
+Decisions:
+
+- The 40 evaluation questions will be written together at Layer 7, not by the human alone.
+
+Problems hit:
+
+- The Cost and usage box on the console home showed access denied. Why: the human was signed in as the dev IAM user, which has had a Bedrock-only policy since 2026-10-12. Fix: browse the console as root or an admin; leave the dev user narrow.
+- `python scripts\show_parsed.py lm35` crashed with `IndexError`. Why: the page number was left off. Fix: `python scripts\show_parsed.py lm35 4`. The script gives no usage message for this case.
+- Cohere Rerank 3.5: as root, "Open in playground" and the three-dot menu were greyed out in the Bedrock console. This does not show whether access is granted. Left for the first call at Layer 5.
+
+Still open:
+
+- Cohere Rerank 3.5 access and the rerank IAM action names (Layer 5).
 
 ## 2026-10-12 — Session 2: pre-build checklist and Layer 1 (PDF parsing)
 

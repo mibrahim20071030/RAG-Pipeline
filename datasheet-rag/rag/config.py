@@ -29,7 +29,7 @@ AWS_REGION = "us-east-1"
 EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"
 EMBED_DIMENSIONS = 1024
 EMBED_NORMALIZE = True
-# NOT YET VERIFIED: the pricing page did not render this figure. Confirm before Layer 3.
+# Verified 2026-10-13 on the Bedrock pricing page: $0.02 per 1M input tokens (on-demand).
 EMBED_USD_PER_1K_TOKENS = 0.00002
 
 # Retrieval
