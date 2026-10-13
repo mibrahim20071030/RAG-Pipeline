@@ -10,7 +10,6 @@ is embedded once however many strategies produce it, a second run costs nothing,
 halfway carries on from where it stopped.
 """
 import argparse
-import hashlib
 import sys
 from itertools import batched
 
@@ -19,18 +18,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from rag import chunk, config, costlog, db, embed, parse
 from rag.chunk_base import approx_tokens
-
-
-def text_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def embed_key() -> str:
-    """Names the cache entries of one model setup: a change of model or normalisation starts a new set.
-
-    A change of EMBED_DIMENSIONS also needs new tables: the vector columns are created with a fixed size.
-    """
-    return f"{config.EMBED_MODEL_ID}|{config.EMBED_DIMENSIONS}|normalize={config.EMBED_NORMALIZE}"
+from rag.embed import embed_key, text_hash
 
 
 def embed_input(chunk_: dict) -> str:
