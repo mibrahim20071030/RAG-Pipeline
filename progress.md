@@ -7,11 +7,8 @@ One entry per working session, newest first. Each entry records the date, what w
 Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
-- [ ] Layer 2 is built and reviewed. Create the branch, commit, open the PR, wait for the workflow, merge:
-  `git checkout -b layer-2-chunking`, then `git add CLAUDE.md progress.md datasheet-rag/rag/config.py datasheet-rag/rag/chunk.py datasheet-rag/rag/chunk_base.py datasheet-rag/rag/chunk_text.py datasheet-rag/rag/chunk_tables.py datasheet-rag/scripts/show_chunks.py datasheet-rag/tests/test_chunk.py`.
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Say whether to keep parallel builds for Layers 4 and 7.
-- [ ] Tell Claude when to start Layer 3 (needs Docker Desktop and `docker start rag-pg`). It starts in plan mode.
+- [ ] Tell Claude when to start Layer 3. It starts in plan mode. `rag-pg` was running on 2026-10-13; after a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
 
@@ -29,6 +26,8 @@ Done:
 - [x] 2026-10-12: PR #1 (Layer 1, hooks, CI workflow) merged into `main`; branch `layer-1-parsing` deleted on GitHub.
 - [x] 2026-10-12: the human added themselves to the bypass list of the `main` ruleset, so Claude can push small changes straight to `main`.
 - [x] 2026-10-12: table review finished by Claude, 12 of 12 pages: 9 match, 3 have defects.
+- [x] 2026-10-13: PR #2 (Layer 2, chunking) merged into `main`; the workflow passed on the PR and on the merge; both layer branches deleted on GitHub.
+- [x] 2026-10-13: parallel builds kept for Layers 4 and 7.
 - [x] 2026-10-12: administrator access removed from the dev IAM user; it now has an inline Bedrock-only policy (InvokeModel on the four project models, Rerank, ListFoundationModels). Titan still embeds; IAM and S3 calls return AccessDenied.
 
 ## What is left
@@ -49,7 +48,7 @@ Cycle 1 (local pipeline and evaluation):
 
 - [x] Layer 0: setup and guardrails.
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
-- [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. Waiting for the human's PR.
+- [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
 - [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
@@ -71,7 +70,7 @@ Cycle 2 (deploy, UI, report):
 
 ## 2026-10-13 — Session 3: Layer 2 (chunking), the first parallel build
 
-Status at the end: Layer 2 is built, reviewed and passing, and waits for the human's branch, commit and PR. Next is Layer 3, when the human says so.
+Status at the end: Layer 2 is done and merged (PR #2). Next is Layer 3, when the human says so.
 
 What we did:
 
@@ -95,7 +94,7 @@ Decisions:
 - Code review (the one review for this layer, recorded with `tools/review_gate.py --reviewed`): 10 findings. Fixed 6: a group header that starts in the first column (STM32 Table 8, pages 46 to 56: the package names over the pin numbers) is now read as a two-row header, so a pin number says which package it belongs to; a heading row inside a table is no longer filled down into the rows under it; a long cell in a split row is cut between words, not mid-word; `chunk.text_chunks` no longer fails for `page`; a heading with no text of its own joins the block below it (heading-only chunks went from 43 to 17); the `rerank_limited` comment in `rag/config.py` now says that a 400-token chunk can still pass the reranker's limit by the length of the question. Found while checking the first fix: ESP32 page 11 has a figure's text caught in the table's first row, so a group header over 60 characters is now ignored. Not fixed, listed under "Still open": three-row headers, a bus index at the very end of a cell, the slow word loop, two copies of `hard_cut`. One finding was judged not a defect (a `null` in both header rows takes the label on its left).
 - Final checks: `tools/checks.py` passes, 329 tests (46 Layer 1, 283 Layer 2).
 - Final chunk counts for the four datasheets together (text + table): `page` 311 + 0; `fixed_256` 460 + 578 = 1,038; `fixed_256_overlap` 484 + 578 = 1,062; `fixed_400` 375 + 422 = 797; `fixed_400_overlap` 383 + 422 = 805; `structure_aware` 489 + 422 = 911; `fixed_1024` 306 + 271 = 577. Ten figure tables are skipped (7 STM32, 3 LM35). Per-document numbers are in `runs/chunk_counts.csv`.
-- Layer 2 is ready for the human's branch, commit and PR. Nothing is committed.
+- The human branched, committed and merged Layer 2 as PR #2; the workflow passed on the PR and on the merge to `main`. The human then kept parallel builds for Layers 4 and 7, and started `rag-pg` for Layer 3.
 - How the parallel build went: the three agents took about 3 to 6 minutes each, side by side, and used about 260,000 tokens between them. The tests written without sight of the code passed first time against both builders, so the contract was clear enough. The table builder's report was the most useful output: it followed the plan and then listed the real tables where the plan was wrong, which a single builder might have quietly worked around. Cost: the lead still had to rewrite three rules and their tests at integration, because the plan's table rules had not been tried on real data first. Lesson for Layer 4: try the contract's rules on real data during planning.
 
 Problems hit:
@@ -112,7 +111,7 @@ Problems hit:
 Still open:
 
 - Cohere Rerank 3.5 access and the rerank IAM action names (Layer 5).
-- The human decides whether to keep parallel builds after this first trial (the `/agents` command no longer exists; the two definitions loaded without a restart).
+- Parallel builds: for Layer 4, try the contract's rules on real data during planning (the `/agents` command no longer exists; the two definitions loaded without a restart).
 - Layer 2 known limits, for Layer 7 to keep in mind:
   - Sections are missed for all-capital titles (`3.25 SDIO`), titles that start with a digit (`6.3.20 12-bit ADC characteristics`) and the unnumbered TCTH sections 1 to 9; a few numbered footnotes are taken as headings (STM32 page 116, ESP32 pages 23 and 25). A check that heading numbers never go backwards would remove those.
   - Tables with three header rows keep only two: the third comes out as a data row (STM32 pages 84, 160, 161; the ESP32 GPIO matrix, pages 63 to 68).
