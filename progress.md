@@ -8,8 +8,6 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Delete the temporary Marketplace inline policy from the dev IAM user (and detach `AmazonBedrockMarketplaceAccess` if it was attached). The account is subscribed to Cohere Rerank now.
-- [ ] Layer 5 is ready: make the branch, commit, open the PR and merge.
 - [ ] Tell Claude when to start Layer 6 (generation and citations, single agent). It starts in plan mode.
 - [ ] After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
@@ -55,7 +53,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
 - [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
-- [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. Not merged yet.
+- [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
 - [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
@@ -74,7 +72,7 @@ Cycle 2 (deploy, UI, report):
 
 ## 2026-10-13 — Session 6: Layer 5 (reranking)
 
-Status at the end: the code and tests are written and the full checks pass with 550 tests (32 new in `tests/test_rerank.py`), and the layer's code review is done. Layer 5 is done: the two-chunk test passed on the real model and the five-question review is in `runs/rerank_review.md`. Cohere access was refused at first and works now (see "Problem"). Nothing is committed; the work is uncommitted on `main` for the human to branch. Next is Layer 6, when the human says so.
+Status at the end: the code and tests are written and the full checks pass with 550 tests (32 new in `tests/test_rerank.py`), and the layer's code review is done. Layer 5 is done: the two-chunk test passed on the real model and the five-question review is in `runs/rerank_review.md`. Cohere access was refused at first and works now (see "Problem"). Merged as PR #5 (`0603520`). Next is Layer 6, when the human says so.
 
 What we did:
 
@@ -123,8 +121,7 @@ Decisions:
 
 Still open:
 
-- The human: delete the temporary Marketplace inline policy from the dev user, then branch, commit and open the PR.
-- Cycle 2: check that the Lambda role can call Cohere Rerank without the Marketplace actions, now that the account is subscribed.
+- Done later the same day: the human deleted the temporary Marketplace policy and merged the layer. One new rerank call made after the deletion was answered ($0.002, 8 queries and $0.016 in total), so the Bedrock-only policy is enough now that the account is subscribed.
 - Layer 7: use `rerank.calls_needed` in the dry run and print the time.
 - Cycle 2: `rerank` writes to the database (the cache), like `question_vector`.
 
