@@ -32,6 +32,23 @@ EMBED_NORMALIZE = True
 # Verified 2026-10-13 on the Bedrock pricing page: $0.02 per 1M input tokens (on-demand).
 EMBED_USD_PER_1K_TOKENS = 0.00002
 
+# Chunking. Size is counted in approximate tokens: characters divided by CHARS_PER_TOKEN, rounded up.
+CHARS_PER_TOKEN = 4
+# name -> size limit in tokens (None: no limit), overlap in tokens, and rerank_limited: True when a chunk on its
+# own can be longer than the reranker reads. A 400-token chunk can still pass that limit by the length of the
+# question, and the token measure is approximate, so Layer 5 truncates for reranking whatever the flag says.
+CHUNK_STRATEGIES = {
+    "page": {"size": None, "overlap": 0, "rerank_limited": True},
+    "fixed_256": {"size": 256, "overlap": 0, "rerank_limited": False},
+    "fixed_256_overlap": {"size": 256, "overlap": 50, "rerank_limited": False},
+    "fixed_400": {"size": 400, "overlap": 0, "rerank_limited": False},
+    "fixed_400_overlap": {"size": 400, "overlap": 80, "rerank_limited": False},
+    "structure_aware": {"size": 400, "overlap": 0, "rerank_limited": False},
+    "fixed_1024": {"size": 1024, "overlap": 0, "rerank_limited": True},
+}
+RERANK_MAX_TOKENS = 400  # a chunk sent to the reranker should stay at or below this, question included
+CHUNK_COUNTS = RUNS_DIR / "chunk_counts.csv"
+
 # Retrieval
 N_CANDIDATES = 30
 TOP_K = 5
