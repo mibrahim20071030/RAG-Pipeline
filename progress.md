@@ -7,7 +7,11 @@ One entry per working session, newest first. Each entry records the date, what w
 Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
-- [ ] Tell Claude when to start Layer 2. It starts in plan mode.
+- [ ] Layer 2 is built and reviewed. Create the branch, commit, open the PR, wait for the workflow, merge:
+  `git checkout -b layer-2-chunking`, then `git add CLAUDE.md progress.md datasheet-rag/rag/config.py datasheet-rag/rag/chunk.py datasheet-rag/rag/chunk_base.py datasheet-rag/rag/chunk_text.py datasheet-rag/rag/chunk_tables.py datasheet-rag/scripts/show_chunks.py datasheet-rag/tests/test_chunk.py`.
+- [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
+- [ ] Say whether to keep parallel builds for Layers 4 and 7.
+- [ ] Tell Claude when to start Layer 3 (needs Docker Desktop and `docker start rag-pg`). It starts in plan mode.
 
 Needed later:
 
@@ -45,7 +49,7 @@ Cycle 1 (local pipeline and evaluation):
 
 - [x] Layer 0: setup and guardrails.
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
-- [ ] Layer 2: chunking. `rag/chunk.py` with `page_based`, `fixed` (256 and 400 tokens, with and without overlap), `structure_aware` and `fixed_1024`; tables kept whole or split with repeated headers. Test: `tests/test_chunk.py`, and `runs/chunk_counts.csv`.
+- [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. Waiting for the human's PR.
 - [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
@@ -65,9 +69,9 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
 
-## 2026-10-13 — Session 3: checks before Layer 2
+## 2026-10-13 — Session 3: Layer 2 (chunking), the first parallel build
 
-Status so far: no layer work yet. Layer 2 waits for the human's go-ahead.
+Status at the end: Layer 2 is built, reviewed and passing, and waits for the human's branch, commit and PR. Next is Layer 3, when the human says so.
 
 What we did:
 
@@ -82,7 +86,24 @@ Decisions:
 - The 40 evaluation questions will be written together at Layer 7, not by the human alone.
 - Parallel builds: Layers 2, 4 and 7 are built by several agents with Claude as the lead; Layers 3, 5, 6 and 8 and the Cycle 2 steps by one agent unless a plan says otherwise. The lead joins the pieces, runs the full checks and runs the one code review. Agents own separate files in the normal folder (no worktrees, because the parsed files and the venv are not in git), never use git, never make paid calls and never edit the shared files. The test writer works from the plan and does not read the new code. Layer 2 is the trial: keep or drop on the result.
 
+- Git rule tightened by the human: Claude asks before every commit to `main`, small changes included. Reason: Claude pushed two commits to `main` this session (the Titan price note, the parallel-build setup) without saying so first. Written into `CLAUDE.md` and the project template.
+- Layer 2 plan approved by the human (chunking, first parallel build): seven strategies, token measure of characters divided by 4, chunks never cross a page, tables written one row per line with their header labels, text labels and units filled down but never numbers, "Figure" tables skipped. Three agents: text builder (`rag/chunk_text.py`), table builder (`rag/chunk_tables.py`), test writer (`tests/test_chunk.py`); the lead writes `rag/chunk_base.py`, `rag/chunk.py` and `scripts/show_chunks.py`.
+- Layer 2 build started, in the working folder on `main` with nothing committed (the human will branch, commit and open the PR at the end). The lead wrote `rag/chunk_base.py` (token measure, chunk format), the chunking settings in `rag/config.py`, `rag/chunk.py` (joins the chunkers, writes `runs/chunk_counts.csv`) and `scripts/show_chunks.py`. Three agents were started together: text builder, table builder, test writer.- Text builder reported: `rag/chunk_text.py` written, ruff clean, its own check passed on all four files (no chunk over its size, fixed chunks reproduce each page's words). It tightened the heading rule beyond the plan: a line ending in `:` is rejected, a section number cannot start with 0, a title starting with a unit (`1 Mbyte`) is rejected, and a contents page gives no headings. Known heading misses it reported: all-capital titles (`3.25 SDIO`), titles starting with a digit (`6.3.20 12-bit ADC characteristics`), the unnumbered TCTH sections 1 to 9, and a few numbered footnotes wrongly taken as headings. 
+- Table builder reported: `rag/chunk_tables.py` written to the plan, ruff clean, all 259 tables chunk within 256, 400 and 1024 tokens. It also reported that the plan's rules gave wrong output on real tables (see "Problems hit").
+- Test writer reported: `tests/test_chunk.py`, 262 tests written from the plan without reading the code; all passed against the builders' first versions.
+- Integration by the lead: three rules in `rag/chunk_tables.py` changed (below), the tests for them rewritten and 12 added. `tools/checks.py` passes: 323 tests. `python -m rag.chunk` wrote `runs/chunk_counts.csv`. Table chunks read by eye for STM32 pages 14, 70, 83; LM35 pages 5, 6, 9; ESP32 pages 14, 20, 68; TCTH pages 2, 6. 
+- Code review (the one review for this layer, recorded with `tools/review_gate.py --reviewed`): 10 findings. Fixed 6: a group header that starts in the first column (STM32 Table 8, pages 46 to 56: the package names over the pin numbers) is now read as a two-row header, so a pin number says which package it belongs to; a heading row inside a table is no longer filled down into the rows under it; a long cell in a split row is cut between words, not mid-word; `chunk.text_chunks` no longer fails for `page`; a heading with no text of its own joins the block below it (heading-only chunks went from 43 to 17); the `rerank_limited` comment in `rag/config.py` now says that a 400-token chunk can still pass the reranker's limit by the length of the question. Found while checking the first fix: ESP32 page 11 has a figure's text caught in the table's first row, so a group header over 60 characters is now ignored. Not fixed, listed under "Still open": three-row headers, a bus index at the very end of a cell, the slow word loop, two copies of `hard_cut`. One finding was judged not a defect (a `null` in both header rows takes the label on its left).
+- Final checks: `tools/checks.py` passes, 329 tests (46 Layer 1, 283 Layer 2).
+- Final chunk counts for the four datasheets together (text + table): `page` 311 + 0; `fixed_256` 460 + 578 = 1,038; `fixed_256_overlap` 484 + 578 = 1,062; `fixed_400` 375 + 422 = 797; `fixed_400_overlap` 383 + 422 = 805; `structure_aware` 489 + 422 = 911; `fixed_1024` 306 + 271 = 577. Ten figure tables are skipped (7 STM32, 3 LM35). Per-document numbers are in `runs/chunk_counts.csv`.
+- Layer 2 is ready for the human's branch, commit and PR. Nothing is committed.
+- How the parallel build went: the three agents took about 3 to 6 minutes each, side by side, and used about 260,000 tokens between them. The tests written without sight of the code passed first time against both builders, so the contract was clear enough. The table builder's report was the most useful output: it followed the plan and then listed the real tables where the plan was wrong, which a single builder might have quietly worked around. Cost: the lead still had to rewrite three rules and their tests at integration, because the plan's table rules had not been tried on real data first. Lesson for Layer 4: try the contract's rules on real data during planning.
+
 Problems hit:
+
+- Layer 2, merged cells filled into the wrong row. What: on ESP32 page 14 one pin's functions (`ADC1_CH7, RTC_GPIO5`) were copied onto the ten pins below it, and on STM32 page 14 "Yes" was copied into the wrong part columns. Why: the parser writes every merged cell as `null`, whether it is merged with the cell above or the cell to its left, and the plan's rule read every `null` as "same as above". Fix: a `null` is filled from above only when it comes before the first filled cell of its row, or sits in a unit column. Any other `null` is read as part of the cell on its left, and that cell is labelled with all the columns it covers (`LM35 MIN / LM35 TYP / LM35 MAX: ±0.4`).
+- Layer 2, group labels on two-row headers. What: STM32 Table 23 labelled the maximum at 25 °C as "Typ", and TCTH page 6 gave the 25 °C maximum the label of the -40 to 125 °C group. Why: the plan shared a group label out evenly over the sub-columns and ignored that a `null` header cell belongs to the header on its left. Fix: a filled header cell names its own column, a `null` takes the group on its left, and only blank cells are shared out.
+- Layer 2, footnote stripping removed real data. What: `EMAC_TXD[0](O)` lost its bus index and `2[15]-1` became `2-1`. Why: any `[n]` or `(n)` was treated as a footnote marker. Fix: a marker is removed only at the end of a word, and never when numbered 0.
+- Layer 2, a number written with a space after its sign (`≤ 3.6`) was not seen as a number and could be copied down. Fix: the number test allows one space after the sign.
 
 - The Cost and usage box on the console home showed access denied. Why: the human was signed in as the dev IAM user, which has had a Bedrock-only policy since 2026-10-12. Fix: browse the console as root or an admin; leave the dev user narrow.
 - `python scripts\show_parsed.py lm35` crashed with `IndexError`. Why: the page number was left off. Fix: `python scripts\show_parsed.py lm35 4`. The script gives no usage message for this case.
@@ -91,7 +112,13 @@ Problems hit:
 Still open:
 
 - Cohere Rerank 3.5 access and the rerank IAM action names (Layer 5).
-- Parallel builds are untested. The agent definitions may need a new Claude Code session before they appear in `/agents`.
+- The human decides whether to keep parallel builds after this first trial (the `/agents` command no longer exists; the two definitions loaded without a restart).
+- Layer 2 known limits, for Layer 7 to keep in mind:
+  - Sections are missed for all-capital titles (`3.25 SDIO`), titles that start with a digit (`6.3.20 12-bit ADC characteristics`) and the unnumbered TCTH sections 1 to 9; a few numbered footnotes are taken as headings (STM32 page 116, ESP32 pages 23 and 25). A check that heading numbers never go backwards would remove those.
+  - Tables with three header rows keep only two: the third comes out as a data row (STM32 pages 84, 160, 161; the ESP32 GPIO matrix, pages 63 to 68).
+  - A merged cell in a value column is left empty, so some LM35 "Tested Limit" and "Design Limit" lines carry no value. A value that spans columns is labelled with all of them. The real fix is for the parser to record whether a merged cell joins the cell above or the cell beside it.
+  - Three uncaptioned figure fragments are still chunked as tables (STM32 pages 103 and 163, TCTH page 8).
+  - A bus index at the very end of a cell (`PA[15]`) would be stripped as a footnote marker. None occurs in the four datasheets.
 
 ## 2026-10-12 — Session 2: pre-build checklist and Layer 1 (PDF parsing)
 
