@@ -1,4 +1,5 @@
 """Titan Text Embeddings V2 calls."""
+import hashlib
 import json
 import sys
 import threading
@@ -20,6 +21,18 @@ def _bedrock():
         _client = boto3.client("bedrock-runtime", region_name=config.AWS_REGION,
                                config=Config(retries={"max_attempts": 10, "mode": "adaptive"}))
     return _client
+
+
+def text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def embed_key() -> str:
+    """Names the cache entries of one model setup: a change of model or normalisation starts a new set.
+
+    A change of EMBED_DIMENSIONS also needs new tables: the vector columns are created with a fixed size.
+    """
+    return f"{config.EMBED_MODEL_ID}|{config.EMBED_DIMENSIONS}|normalize={config.EMBED_NORMALIZE}"
 
 
 def _invoke(text: str) -> tuple[list[float], int]:

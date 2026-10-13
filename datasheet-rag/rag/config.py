@@ -62,6 +62,19 @@ CHUNK_COUNTS = RUNS_DIR / "chunk_counts.csv"
 # Retrieval
 N_CANDIDATES = 30
 TOP_K = 5
+DEFAULT_STRATEGY = "fixed_400"  # the chunking strategy searched when none is named; Layer 8 picks the final one
+KEYWORD_CONFIGS = ("english", "simple")  # the two keyword columns: tsv_english (stemmed) and tsv_simple (as written)
+KEYWORD_CONFIG = "english"
+RRF_C = 60
+# Experiment, off in the baseline: limit a search to the datasheet the question names.
+DETECT_PART = False
+# document name -> lower-case prefixes; a question word that starts with one names that datasheet.
+PART_ALIASES = {
+    "DS_CD00237391": ("stm32f20",),
+    "TCTH022BE_datasheet_en_20230425": ("tcth0",),
+    "esp32_datasheet_en": ("esp32",),
+    "lm35": ("lm35",),
+}
 
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")

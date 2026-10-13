@@ -1,10 +1,8 @@
 """Layer 3 tests: the tables and the load. They need the local Postgres and skip themselves without it.
 
-Everything runs in a throwaway schema with a fake embedder, so the real rows are never touched and no
-test calls AWS.
+Everything runs in a throwaway schema (the `conn` fixture in conftest.py) with a fake embedder, so the real
+rows are never touched and no test calls AWS.
 """
-import uuid
-
 import psycopg
 import pytest
 
@@ -34,28 +32,6 @@ class FakeEmbedder:
     def __call__(self, texts, label=""):
         self.texts.extend(texts)
         return [[(len(text) % 97 + 1) / 100] + [0.0] * (config.EMBED_DIMENSIONS - 1) for text in texts]
-
-
-@pytest.fixture(scope="session")
-def database():
-    """Skips the tests that need Postgres when it cannot be reached. Asked once, and only when one is run."""
-    try:
-        db.connect().close()
-    except psycopg.OperationalError:
-        pytest.skip("no local Postgres (start it with: docker start rag-pg)")
-
-
-@pytest.fixture
-def conn(database):
-    schema = f"{db.TEST_SCHEMA_PREFIX}{uuid.uuid4().hex[:12]}"
-    with db.connect() as admin:
-        db.create_test_schema(admin, schema)
-        try:
-            with db.connect(schema) as connection:
-                db.create_schema(connection)
-                yield connection
-        finally:
-            db.drop_test_schema(admin, schema)
 
 
 def test_create_schema_twice_is_fine(conn):

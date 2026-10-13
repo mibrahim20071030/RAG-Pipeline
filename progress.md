@@ -8,7 +8,8 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Tell Claude when to start Layer 4 (parallel build). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
+- [ ] Layer 4 is built and reviewed (2026-10-13): make the branch, commit, open the PR and merge. Optional look first: from `datasheet-rag`, `python scripts\show_search.py` (free now, the vectors are cached) and `runs\search_review.md`.
+- [ ] Tell Claude when to start Layer 5 (reranking, single agent). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
 
@@ -51,7 +52,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
-- [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
+- [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. Waiting for the PR and merge.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
@@ -68,6 +69,56 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-13 — Session 5: Layer 4 (retrieval), parallel build in progress
+
+Status at the end: Layer 4 is built, reviewed and ready for the human's branch, PR and merge. The full checks pass with 518 tests (350 existing plus 168 in `tests/test_search.py`). The by-eye review is in `runs/search_review.md`. Next is Layer 5, when the human says so.
+
+What we did:
+
+- Readiness check: `main` clean, `rag-pg` up, 5,501 chunks stored.
+- Tried the search rules on the real chunks before writing the contract (read-only queries on `fixed_400` and `page`):
+  - Plain `ts_rank` fails the part-number test. For "TCTH022BE supply voltage" the top hit was an STM32 table-of-contents chunk, because `ts_rank` counts matches and does not know that `TCTH022BE` is rare (2 chunks) and `supply` is common. Weighting each term by rarity puts a chunk with the part number first. It runs in 1 to 25 ms.
+  - With the rarity weight, no stop-word list of our own is needed, so `english` vs `simple` stays a one-change comparison.
+  - One term at a time through `plainto_tsquery` is safe for any input; an empty or all-stop-word question returns no rows.
+  - `EXPLAIN` on the vector query shows `Sort Key: (c.embedding <=> ...)`; exact search took 63 ms.
+- Plan approved by the human (parallel: two `layer-builder` agents and one `test-writer`).
+- Step 0 by the lead, before the agents started (350 tests still pass):
+  - `rag/config.py`: `DEFAULT_STRATEGY = "fixed_400"` (a placeholder until Layer 8), `KEYWORD_CONFIGS`, `KEYWORD_CONFIG = "english"`, `RRF_C = 60`, `DETECT_PART = False`, `PART_ALIASES`.
+  - `text_hash` and `embed_key` moved from `rag/load.py` to `rag/embed.py` (load imports them), so the query path does not import the PDF and chunking code.
+  - The `database` and `conn` fixtures moved from `tests/test_db.py` to a new `tests/conftest.py`.
+- `scripts/show_search.py` written by the lead (not run yet): vector, keyword (`english` and `simple`) and hybrid top 5 for five questions. It prints the paid calls and asks first.
+- Agents started together: builder A owns `rag/db.py` (`nearest_chunks`, `keyword_chunks`, `explain_nearest`), builder B owns `rag/search.py`, the test writer owns `tests/test_search.py`.
+
+- Agent reports, all three finished with no departure from the contract:
+  - Builder A: `nearest_chunks`, `keyword_chunks` and `explain_nearest` added to `rag/db.py`. On the real `fixed_400` rows, "TCTH022BE supply voltage" returns a TCTH chunk first and `EXPLAIN` shows `<=>` in the Sort Key.
+  - Builder B: `rag/search.py` with `query_terms`, `rrf`, `detect_part`, `question_vector`, `vector_search`, `keyword_search`, `hybrid_search` and `search`.
+  - Test writer: `tests/test_search.py`, 168 tests, all passing; the pure-function tests need no database.
+- Integration by the lead: read both builders' code, ran `tools/checks.py` (518 passed), and ran keyword and hybrid searches through the joined code on the real chunks (read-only). Nothing had to be changed to make the pieces fit.
+- Noted by builder A for Layer 7: a datasheet filter changes the keyword ranking, because inside one datasheet its own part number is no longer rare.
+
+- By-eye review, after the human's yes: `python scripts\show_search.py` made 5 Titan calls (70 tokens, about $0.0000014, 5 cost log rows); a second run made 0. Hybrid had an answer chunk in the top 5 for all five questions and at rank 1 for three. The two sides failed on different questions: keyword search found the LM35CA accuracy table that the vector side had at rank 10, and the vector side found the quiescent current table for the reworded question. `english` beat `simple` on two questions. The weak one is "TCTH022BE supply voltage": the answer chunk does not contain the part number, so it is only at hybrid rank 4. Written up in `runs/search_review.md`.
+- The layer's one code review (code-review skill): 9 findings, none a wrong result on the current data. Fixed 6:
+  - `search()` returns `[]` for a question with no words in every mode, and never sends it to Titan.
+  - Arguments left as `None` take their value from `rag/config.py` or `embed.embed_text` when the function is called, not at import. So a setting changed later is used, and an embedder replaced in a test cannot be bypassed into a paid call. This changes the default values in the contract (told to the human in the hand-over).
+  - `nearest_chunks` orders chunks with equal distance by id, in Python, so the raw `<=>` stays alone in `ORDER BY`.
+  - New `search.uncached_questions`, used by `show_search.py` to count paid calls, so the count and the cache use one key.
+  - The keyword columns in `rag/db.py` are derived from `config.KEYWORD_CONFIGS`.
+  - `show_search.py` explains a Bedrock refusal instead of a traceback; `hybrid_search` computes the ranks once.
+- Not changed, recorded in `CLAUDE.md`: `detect_part` matches by prefix (`LM358` would select LM35; it is an experiment, off by default); the question cache is keyed on the exact text and grows with every new question (a Cycle 2 decision).
+- Checks after the fixes: 518 passed. Review recorded with `tools/review_gate.py --reviewed`. `python scripts\show_db.py` still ends with "OK".
+- `CLAUDE.md` status updated: Layer 4 built, Layer 5 next.
+
+Decisions:
+
+- Keyword rank = sum over question terms of rarity weight × `ts_rank(..., 1)`, where the weight is `ln(1 + (N - df + 0.5) / (df + 0.5))`.
+- Tie rule for RRF: score descending, then chunk id ascending.
+- Question vectors are kept in `embedding_cache` (`search.question_vector`), as planned for Layer 7.
+
+Still open:
+
+- The human's part: branch, commits, PR and merge for Layer 4.
+- Known keyword limits found on the real data, not fixed in this layer: Postgres keeps `VDD/VBAT` as one token (322 such tokens), so `VDD` does not match it; `STM32F205` as an exact word is in 1 chunk (the datasheet writes `STM32F205xx` and `STM32F20x`), and prefix matching is not used because `GPIO1` would then match `GPIO16`; `-40` is stored as a signed token, so `40` does not match it.
 
 ## 2026-10-13 — Session 4: Layer 3 (embeddings and storage), in progress
 

@@ -199,6 +199,80 @@ def sample_chunks(conn: psycopg.Connection, strategy: str, document: str, limit:
     return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
+_HIT_KEYS = ("id", "document", "page", "page_label", "section", "kind", "text", "score")
+
+# Keyword search configuration -> the generated column built with it (tsv_english, tsv_simple in `_TABLES`).
+_TSV_COLUMNS = {name: f"tsv_{name}" for name in config.KEYWORD_CONFIGS}
+
+# The raw `<=>` stands alone in ORDER BY so that an index can serve it; the score is computed in SELECT only.
+_NEAREST_SQL = """
+SELECT c.id, d.name, c.page, c.page_label, c.section, c.kind, c.text,
+       1 - (c.embedding <=> %(vector)s::vector) AS score
+FROM chunks c JOIN documents d ON d.id = c.document_id
+WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+ORDER BY c.embedding <=> %(vector)s::vector
+LIMIT %(n)s
+"""
+
+# One tsquery per term, OR-joined by summing. Each term is weighted by how rare it is in the searched set
+# (N chunks, df of them matching), times ts_rank normalised by document length (the 1).
+_KEYWORD_SQL = """
+WITH terms AS (
+    SELECT DISTINCT ON (q::text) q
+    FROM (SELECT plainto_tsquery(%(cfg)s::regconfig, t) AS q FROM unnest(%(terms)s::text[]) AS t) x
+    WHERE numnode(q) > 0
+), total AS (
+    SELECT count(*)::float AS n FROM chunks c JOIN documents d ON d.id = c.document_id
+    WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+), hits AS (
+    SELECT c.id, ts_rank(c.{col}, t.q, 1) AS r, count(*) OVER (PARTITION BY t.q::text) AS df
+    FROM chunks c JOIN documents d ON d.id = c.document_id JOIN terms t ON c.{col} @@ t.q
+    WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+)
+SELECT c.id, d.name, c.page, c.page_label, c.section, c.kind, c.text,
+       sum(ln(1 + (total.n - h.df + 0.5) / (h.df + 0.5)) * h.r) AS score
+FROM hits h JOIN chunks c ON c.id = h.id JOIN documents d ON d.id = c.document_id, total
+GROUP BY c.id, d.name
+ORDER BY score DESC, c.id
+LIMIT %(n)s
+"""
+
+
+def _hits(rows: list[tuple]) -> list[dict]:
+    """Rows of a search query as hits, with the score as a Python float."""
+    return [dict(zip(_HIT_KEYS, (*row[:-1], float(row[-1])), strict=True)) for row in rows]
+
+
+def _nearest_params(vector, strategy: str, n: int, document: str | None) -> dict:
+    return {"vector": vector_text(vector), "strategy": strategy, "n": n, "document": document}
+
+
+def nearest_chunks(conn: psycopg.Connection, vector, strategy: str, n: int,
+                   document: str | None = None) -> list[dict]:
+    """The n chunks of one strategy closest to the vector by cosine distance, best first. Score = 1 - distance."""
+    rows = conn.execute(_NEAREST_SQL, _nearest_params(vector, strategy, n, document)).fetchall()
+    # Chunks with the same text have the same distance. The id settles their order here, not in ORDER BY.
+    return sorted(_hits(rows), key=lambda hit: (-hit["score"], hit["id"]))
+
+
+def explain_nearest(conn: psycopg.Connection, vector, strategy: str, n: int) -> str:
+    """The plan Postgres picks for the `nearest_chunks` query over all documents."""
+    rows = conn.execute("EXPLAIN " + _NEAREST_SQL, _nearest_params(vector, strategy, n, None)).fetchall()
+    return "\n".join(row[0] for row in rows)
+
+
+def keyword_chunks(conn: psycopg.Connection, terms: list[str], strategy: str, n: int, ts_config: str = "english",
+                   document: str | None = None) -> list[dict]:
+    """The n chunks of one strategy that best match any of the terms, best first. No match gives an empty list."""
+    if ts_config not in _TSV_COLUMNS:
+        raise ValueError(f"ts_config must be one of {sorted(_TSV_COLUMNS)}, got {ts_config!r}")
+    query = sql.SQL(_KEYWORD_SQL).format(col=sql.Identifier(_TSV_COLUMNS[ts_config]))
+    rows = conn.execute(
+        query, {"cfg": ts_config, "terms": list(terms), "strategy": strategy, "n": n, "document": document}
+    ).fetchall()
+    return _hits(rows)
+
+
 def _test_schema(name: str) -> sql.Identifier:
     if not name.startswith(TEST_SCHEMA_PREFIX):
         raise ValueError(f"a test schema name must start with {TEST_SCHEMA_PREFIX!r}, got {name!r}")
