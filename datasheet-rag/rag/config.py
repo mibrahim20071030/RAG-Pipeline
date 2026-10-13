@@ -31,6 +31,16 @@ EMBED_DIMENSIONS = 1024
 EMBED_NORMALIZE = True
 # Verified 2026-10-13 on the Bedrock pricing page: $0.02 per 1M input tokens (on-demand).
 EMBED_USD_PER_1K_TOKENS = 0.00002
+EMBED_WORKERS = 4  # calls in flight at once; the model takes one text per request
+EMBED_BATCH = 100  # texts per batch: one cost log row, and vectors are saved after each batch
+
+# The datasheets, by parsed name. `revision` is what the PDF prints on its first page.
+DOCUMENTS = {
+    "DS_CD00237391": {"part": "STM32F205/207", "revision": "DS6329 Rev 18"},
+    "TCTH022BE_datasheet_en_20230425": {"part": "TCTH0xxxE", "revision": "Rev. 2.0.A"},
+    "esp32_datasheet_en": {"part": "ESP32", "revision": "Version 5.3"},
+    "lm35": {"part": "LM35", "revision": "SNIS159H"},
+}
 
 # Chunking. Size is counted in approximate tokens: characters divided by CHARS_PER_TOKEN, rounded up.
 CHARS_PER_TOKEN = 4

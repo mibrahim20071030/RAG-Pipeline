@@ -22,7 +22,14 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Table text: caption line, then one line per row, `Label: value, Label: value`. A merged cell is filled from above only before the first filled cell of its row or in a unit column, and a number is never copied; any other merged cell is read as part of the cell on its left, which is labelled with every column it covers (`MIN / TYP / MAX: ±0.4`). Tables captioned "Figure" are skipped (10).
   - Totals for the four datasheets: `page` 311, `fixed_256` 1,038, `fixed_256_overlap` 1,062, `fixed_400` 797, `fixed_400_overlap` 805, `structure_aware` 911, `fixed_1024` 577.
   - Known limits are listed in `progress.md` (2026-10-13, "Still open"): missed section headings, three-row headers, value cells left empty, three figure fragments. `page` and `fixed_1024` are `rerank_limited`; a 400-token chunk can also pass the reranker's limit once the question is added, so Layer 5 must truncate.
-- Next: Layer 3 (embeddings and storage), single agent, in plan mode, when the human says so.
+- Layer 3: DONE on 2026-10-13 (built and reviewed; the PR is the human's). 350 tests pass (`tests/test_db.py` 15, `tests/test_embed.py` 6). All 5,501 chunks of the seven strategies are in `rag-pg` with 1024-number vectors; `python scripts\show_db.py` compares the stored counts with Layer 2 and must end with "OK".
+  - Files: `rag/db.py` (all SQL; functions take a connection from `db.connect()`, which is autocommit, so use `conn.transaction()` for a multi-statement change), `rag/load.py` (`plan_load`, `load_document`; `python -m rag.load` prints calls and cost and stops, `--run` asks then loads, `--run --yes` does not ask, `--doc` and `--strategy` narrow it), `rag/embed.py` (`embed_text` for one string, `embed_texts` for many), `rag/costlog.py` (`read_rows`), `scripts/show_db.py`. Document part and revision are `DOCUMENTS` in `rag/config.py`.
+  - Schema as built is in the "Schema" section: `chunk_index`, two keyword columns `tsv_english` and `tsv_simple` (each with a GIN index), and `embedding_cache`. A vector goes in and comes out as the text `[0.1,0.2,...]` cast to `vector`; no `pgvector` Python package.
+  - `embedding_cache` holds every vector paid for, keyed by the SHA-256 of the text plus the model setup. Only 2,604 of the 5,501 chunk texts are different, a re-run makes no call, and a stopped load carries on. The header-prefix experiment changes only `load.embed_input` and is stored under its own strategy label.
+  - Cost: 863,130 tokens, $0.0173 for the whole load. Real Titan tokens were 1.29 times the characters / 4 estimate. The cost log has one row per batch of up to 100 texts.
+  - Speed: the account allows about 60 Titan requests a minute (seen as a steady 1 call per second; the quota itself is not checked, VERIFY in Service Quotas), so the load took about 45 minutes. Layer 7 embeds one question per call: plan for that rate, or cache question vectors.
+  - Tests that need Postgres run in a throwaway schema (`test_...`) with a fake embedder and skip when the database is not reachable.
+- Next: Layer 4 (retrieval), parallel build, in plan mode, when the human says so.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -275,32 +282,46 @@ Do:
 Test:
 - `python -m rag.pipeline "<question>"` prints an answer with document and page citations for three real questions.
 
-## Schema (draft)
+## Schema (as built in Layer 3; the source is `_TABLES` in `rag/db.py`)
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 CREATE TABLE documents (
     id       SERIAL PRIMARY KEY,
-    name     TEXT NOT NULL,
+    name     TEXT NOT NULL UNIQUE,       -- parsed name, e.g. lm35
+    file     TEXT,                       -- PDF file name
     part     TEXT,
     revision TEXT
 );
 
 CREATE TABLE chunks (
     id          SERIAL PRIMARY KEY,
-    document_id INTEGER REFERENCES documents(id),
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     strategy    TEXT NOT NULL,           -- which chunking strategy produced it
+    chunk_index INTEGER NOT NULL,        -- order within the document and strategy
     page        INTEGER NOT NULL,        -- PDF page position, used for citations
     page_label  TEXT,                    -- printed page label, if known
     section     TEXT,
-    kind        TEXT,                    -- 'text' or 'table'
+    kind        TEXT NOT NULL,           -- 'text' or 'table'
     text        TEXT NOT NULL,
-    embedding   vector(1024),
-    tsv         tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED
+    embedding   vector(1024) NOT NULL,
+    tsv_english tsvector GENERATED ALWAYS AS (to_tsvector('english', text)) STORED,
+    tsv_simple  tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+    UNIQUE (document_id, strategy, chunk_index)
 );
 
-CREATE INDEX chunks_tsv_idx ON chunks USING GIN (tsv);
+CREATE INDEX chunks_strategy_idx ON chunks (strategy);
+CREATE INDEX chunks_tsv_english_idx ON chunks USING GIN (tsv_english);
+CREATE INDEX chunks_tsv_simple_idx ON chunks USING GIN (tsv_simple);
+
+-- Every vector that was paid for, keyed by the SHA-256 of the embedded text and the model setup.
+CREATE TABLE embedding_cache (
+    text_sha256 TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    embedding   vector(1024) NOT NULL,
+    PRIMARY KEY (text_sha256, model)
+);
 -- Experiment only: CREATE INDEX chunks_emb_idx ON chunks USING hnsw (embedding vector_cosine_ops);
 ```
 

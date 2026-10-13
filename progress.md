@@ -8,7 +8,9 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Tell Claude when to start Layer 3. It starts in plan mode. `rag-pg` was running on 2026-10-13; after a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
+- [ ] Layer 3 is ready: make the branch, commit, open the PR and merge. Optional check first, from `datasheet-rag` with the venv active: `python scripts\show_db.py` (must end with "OK").
+- [ ] Optional: in the AWS console, Service Quotas, Amazon Bedrock, look up the Titan Text Embeddings V2 requests-per-minute quota in us-east-1 (the load ran at about 60 a minute).
+- [ ] Tell Claude when to start Layer 4 (parallel build). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
 
@@ -49,7 +51,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 0: setup and guardrails.
 - [x] Layer 1: PDF parsing. `tests/test_parse.py` passes (46 tests) and the manual table review is done: 12 of 12 pages match after the two defects found in it were fixed.
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
-- [ ] Layer 3: embeddings and storage. Create `documents` and `chunks` in `rag/db.py`, embed in batches, make the load idempotent. Test: row counts match Layer 2, `vector_dims` is 1024, a re-run does not change the count.
+- [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR by the human still to do.
 - [ ] Layer 4: retrieval. `vector_search`, `keyword_search` (OR-joined tsquery, `english` vs `simple`) and `rrf` in `rag/search.py`. Test: `tests/test_search.py`, `EXPLAIN` on the vector query, and a by-eye review of five questions.
 - [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
@@ -67,6 +69,49 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-13 — Session 4: Layer 3 (embeddings and storage), in progress
+
+Status at the end: Layer 3 is built, loaded, reviewed and ready for the human's PR. 350 tests pass; 5,501 chunks are stored with vectors; the load cost $0.0173. Next is Layer 4, when the human says so.
+
+What we did:
+
+- Plan approved by the human (single agent). Measured while planning: 5,501 chunks over the seven strategies, but only 2,604 different texts, because table chunks repeat across strategies of the same size.
+- Checked the Titan V2 request in the Bedrock user guide: `inputText` (one string per request), `dimensions` (1024, 512 or 256), `normalize` (default true); the response has `embedding` and `inputTextTokenCount`. The page does not state the input limit; the longest chunk is 6,476 characters, far below the 8,192 tokens / 50,000 characters usually quoted.
+- New `rag/db.py` (all SQL): `connect`, `create_schema`, `upsert_document`, `replace_chunks`, the embedding cache functions, `count_chunks`, `strategy_counts`, `embedding_dims`, `list_documents`, `sample_chunks`, and the test-schema helpers.
+- New `rag/load.py`: `plan_load` (no paid call), `load_document`, and the command `python -m rag.load` (prints calls and cost, stops) / `python -m rag.load --run`.
+- `rag/embed.py`: `embed_texts` (4 calls at a time, one cost log row per batch), adaptive retries on the client. `rag/costlog.py`: `read_rows`. `rag/config.py`: `EMBED_WORKERS`, `EMBED_BATCH`, `DOCUMENTS`.
+- New `tests/test_db.py` (15 tests, throwaway schema, fake embedder, skips without Postgres), `tests/test_embed.py` (6 tests, fake Bedrock), `scripts/show_db.py` (the acceptance check).
+- `python -m rag.load` created the three tables in `rag-pg` (free) and printed: 2,604 paid calls, about 666,540 tokens, about $0.0133.
+
+Decisions:
+
+- Vectors that were paid for are kept in an `embedding_cache` table keyed by the SHA-256 of the text. A text is embedded once, a re-run costs nothing, and a stopped run carries on.
+- Cost log: one row per batch of up to 100 texts, not one per call.
+- Schema against the draft: `documents.name` unique plus a `file` column; `chunks.chunk_index`; two keyword columns `tsv_english` and `tsv_simple`, each with a GIN index, so Layer 4 can compare them without a migration.
+- Document details in `rag/config.py`: STM32F205/207 (DS6329 Rev 18), TCTH0xxxE (Rev. 2.0.A), ESP32 (Version 5.3), LM35 (SNIS159H).
+
+Problems:
+
+- A test showed that after one failed embedding call, calls queued behind it could still run (a worker takes its next text before the failure is noticed). Fixed with a shared stop flag in `embed_texts`.
+- The TCTH file is named `..._20230425` but its pages print `2026-04-07, Rev. 2.0.A`. The printed revision is what is stored.
+
+- Paid step 1, after the human's yes: `python -m rag.load --run --doc TCTH022BE_datasheet_en_20230425`. 110 calls, 30,087 real tokens ($0.0006), 1.18 times the estimate; 234 rows stored, 7 cost log rows.
+- Paid step 2, after a second yes with the corrected figure (2,494 calls, about 755,000 tokens, about $0.015): `python -m rag.load --run` started. It runs at about 1 call per second, because the account's Titan request limit is low and the client slows down when throttled. No call fails and nothing costs more; the load takes about 40 minutes and each batch of 100 is saved as it goes.
+- The "Schema" section of `CLAUDE.md` now shows the tables as built (source: `_TABLES` in `rag/db.py`).
+- The layer's one code review ran with the code-review skill while the load ran: 10 findings, none a wrong result in the data. Fixed 8: the Bedrock client is made before the worker threads start; a cost log that cannot be written no longer throws away paid vectors (it prints a warning with the tokens); a database error mid-load gets the same plain "run it again" message as a Bedrock error, and the spend summary cannot hide another error; `--run` now asks `[y/N]` before paid calls unless `--yes` is given; a document detail given as None keeps its stored value, and a document missing from `config.DOCUMENTS` prints a warning; `scripts/show_db.py` flags stored rows for a document or strategy that no longer exists, and gives the `docker start rag-pg` hint; `tests/test_db.py` connects in a session fixture, not at import. Not changed: `EMBED_DIMENSIONS` is still fixed in the table columns (the docstring now says a change needs new tables), and each load still asks the cache twice (cheap). Checks pass after the fixes (350 tests); review recorded with `tools/review_gate.py --reviewed`.
+
+- The full load finished (exit 0) after about 45 minutes: 833,043 tokens, $0.0167, 38 cost log rows. With step 1 the layer cost 863,130 tokens, $0.0173, in 45 batch rows. Real tokens were 1.29 times the characters / 4 estimate.
+- Acceptance checks, all passed: `python scripts\show_db.py` shows every one of the 28 document and strategy counts equal to Layer 2 (311, 1,038, 1,062, 797, 805, 911, 577; total 5,501) and `vector_dims` 1024. A second `python -m rag.load --run` made 0 paid calls, added 0 cost log rows, and left the counts unchanged.
+- The human asked why the load was slow. Answer: batches of 100 arrive exactly 100 seconds apart whatever their token count, so the limit is on requests (about 60 a minute), not on text size or the database. More workers do not help. The quota can be read, and an increase requested, in Service Quotas (Amazon Bedrock, Titan Text Embeddings V2 requests per minute, us-east-1); not checked yet.
+- `CLAUDE.md` status updated: Layer 3 done, Layer 4 next.
+
+Still open:
+
+- The human: branch, commit, PR and merge for Layer 3 (file list in the hand-over).
+- Document ids in `documents` are 1, 8, 22 and 29, not 1 to 4: each repeated upsert uses up a number from the id counter. Harmless; nothing depends on the values.
+- Layer 7: at about 1 Titan call per second, 40 questions take about 40 seconds per run unless question vectors are cached. Decide in the Layer 7 plan.
+- Optional, the human: look up the Titan V2 requests-per-minute quota in Service Quotas to confirm the 60.
 
 ## 2026-10-13 — Session 3: Layer 2 (chunking), the first parallel build
 
