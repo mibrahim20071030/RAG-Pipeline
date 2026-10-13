@@ -75,9 +75,12 @@ What we did:
 - Verified the Titan V2 price from the Bedrock pricing page, pasted by the human: $0.02 per 1M input tokens on-demand, $0.01 batch. It matches `EMBED_USD_PER_1K_TOKENS = 0.00002`; only the comment in `rag/config.py` changed.
 - Region: the console opened in Ohio (us-east-2). The console region is only a view; the code sets `us-east-1` in `rag/config.py` and there is no `~\.aws\config` to override it. No regional AWS resource exists yet.
 
+- Set up parallel layer builds at the human's request. Added `.claude/agents/layer-builder.md` and `.claude/agents/test-writer.md`, and a "Parallel layer builds" section in `CLAUDE.md` (which layers split, how a build runs, the rules for the agents). The same two definitions and the rules, with project details removed, went into `..\project-template` (`CLAUDE.md`, `SETUP.md`, `.claude/agents/`). No agent has been run yet.
+
 Decisions:
 
 - The 40 evaluation questions will be written together at Layer 7, not by the human alone.
+- Parallel builds: Layers 2, 4 and 7 are built by several agents with Claude as the lead; Layers 3, 5, 6 and 8 and the Cycle 2 steps by one agent unless a plan says otherwise. The lead joins the pieces, runs the full checks and runs the one code review. Agents own separate files in the normal folder (no worktrees, because the parsed files and the venv are not in git), never use git, never make paid calls and never edit the shared files. The test writer works from the plan and does not read the new code. Layer 2 is the trial: keep or drop on the result.
 
 Problems hit:
 
@@ -88,6 +91,7 @@ Problems hit:
 Still open:
 
 - Cohere Rerank 3.5 access and the rerank IAM action names (Layer 5).
+- Parallel builds are untested. The agent definitions may need a new Claude Code session before they appear in `/agents`.
 
 ## 2026-10-12 — Session 2: pre-build checklist and Layer 1 (PDF parsing)
 

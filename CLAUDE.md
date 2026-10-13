@@ -16,6 +16,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
 - Cohere Rerank 3.5 access is not confirmed. In the Bedrock console (signed in as root) "Open in playground" and the three-dot menu were greyed out, which proves nothing either way. The first rerank call at Layer 5 is the real test; if it is refused, the dev IAM user probably lacks the AWS Marketplace subscribe permissions a third-party model needs on first use (VERIFY).
 - Layer 1: DONE on 2026-10-12. `rag/parse.py`, `tests/test_parse.py` (46 pass), `conftest.py` and `scripts/show_parsed.py` exist. `python -m rag.parse` writes `runs/parsed/<doc>.json` for the four datasheets (311 pages, 259 tables, none scanned). Each page has `page`, `page_label`, `text` (whole page), `text_outside_tables` and `tables` (`caption`, `rows`; a `null` cell is a merged cell, `""` is an empty one). A bare footnote marker is written in brackets (`GPIO16[2]`); a marker printed as `(1)` stays inline. The manual review covered 12 pages against rendered images; the two defects it found (values with no column lines, glued footnote markers) are fixed and re-checked. Details in `runs/parse_review.md`.
 - PR #1 (Layer 1, hooks, CI workflow) was merged on 2026-10-12; later fixes were pushed straight to `main`. Next: Layer 2 (chunking), in plan mode, when the human says so. Read "Known limits" in `runs/parse_review.md` before writing the table chunker: merged cells need filling down, two-row headers need combining, some figures are still kept as tables, and some captions are missing or loose.
+- Parallel layer builds were set up on 2026-10-13 (see "Parallel layer builds"): `.claude/agents/layer-builder.md` and `.claude/agents/test-writer.md`. Not yet used; Layer 2 is the first trial.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -46,6 +47,42 @@ This file is the build plan. Read it fully before writing code. Work one layer a
 - Keep `progress.md` (repo root) up to date. At the end of every session, add a dated entry at the top of the log: what was done, decisions, problems, what is still open. Update the human's checklist in the same file.
 - Keep a cost log. Every Bedrock call records its token or query count to `runs/cost_log.csv`.
 - Do not run any evaluation loop that calls a paid model until the number of calls and the estimated cost are printed and confirmed.
+
+## Parallel layer builds (set by the human on 2026-10-13)
+
+A layer that splits well is built by several agents at the same time, with Claude as the lead. This is a standing request from the human to use subagents for those layers; it is to be tried on Layer 2 and kept or dropped on the result.
+
+Which layers split:
+
+| Layer | Build | Split |
+|---|---|---|
+| 2 chunking | Parallel | text strategies; table chunking; test writer |
+| 3 embeddings and storage | Single | Small, tightly linked, and it makes paid calls |
+| 4 retrieval | Parallel | database search functions (SQL in `rag/db.py`); pure functions (`rrf`, tsquery builder, `detect_part`); test writer |
+| 5 reranking | Single | One small module around one paid call |
+| 6 generation and citations | Single | One small module; the functions depend on each other |
+| 7 evaluation | Parallel | `metrics.py`; `run_eval.py`; test writer. The questions are written by the human and Claude together |
+| 8 wrap-up | Single | Decisions and a summary, no parallel work |
+| Cycle 2 steps | Single by default | Mostly console and deployment work in a fixed order. Decide in each step's plan |
+
+The table is the default. The layer's plan may change it with a reason (for example, a layer turns out smaller than expected).
+
+How a parallel build runs:
+
+1. Plan, in plan mode. The plan has a "Work split" section with: the contract (shared data shapes, function names and signatures); each agent's job and done test; file ownership, with no file given to two agents. A single-agent layer says so in one line instead.
+2. Build. After the human approves the plan, the lead starts the agents together: `layer-builder` for each code piece and one `test-writer` (definitions in `.claude/agents/`). Each prompt carries the contract, the job, the owned files and the done test in full, because an agent starts with no memory of the conversation.
+3. Integrate. The lead reads every agent's report and the code, joins the pieces, makes the changes agents may not make (`rag/config.py`, shared files), runs the full checks (`tools/checks.py`) and fixes what does not fit. A test that fails is fixed in the code unless the test contradicts the contract.
+4. Review and hand over. One code review of the whole layer with the built-in code-review skill, as in the code review rule above. Then the lead updates `CLAUDE.md` and `progress.md` and tells the human the layer is ready, with the list of changed files.
+
+Rules for the agents (also written into each definition):
+
+- An agent changes only the files it owns. It reports problems in other files and does not fix them.
+- Agents work in the normal project folder on separate files, not in git worktrees: the parsed datasheets, the PDFs and the venv are not in git, so a worktree would not have them.
+- Agents never run a git command that changes anything. Commits, branches and pushes stay as in the Git rule.
+- Agents never make a paid or cloud call. Only the lead does, after the cost is printed and confirmed.
+- Agents never edit `CLAUDE.md`, `progress.md`, `rag/config.py`, or anything under `.claude/`, `.githooks/`, `.github/` or `tools/`.
+- The test writer works from the contract and does not read the new code. Builders do not edit tests.
+- An agent that finds the contract wrong stops and reports it. Only the lead changes the contract, and tells the human when it does.
 
 ## Settled design decisions
 
