@@ -8,7 +8,6 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Before Layer 5: in Service Quotas, Amazon Bedrock, us-east-1, look up the on-demand requests-per-minute quotas for Cohere Rerank 3.5, Nova Lite and Nova Pro and paste them to Claude (Titan's is 60, against a default of 6,000).
 - [ ] Tell Claude when to start Layer 4 (parallel build). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
@@ -111,7 +110,8 @@ Still open:
 - Done later the same day: the human merged Layer 3 as PR #3 (`4d20ab2`) and deleted the branch locally and on GitHub. Local `main` matches `origin/main`.
 - Document ids in `documents` are 1, 8, 22 and 29, not 1 to 4: each repeated upsert uses up a number from the id counter. Harmless; nothing depends on the values.
 - Layer 7: at about 1 Titan call per second, 40 questions take about 40 seconds per run unless question vectors are cached. Decide in the Layer 7 plan.
-- Confirmed by the human in Service Quotas (us-east-1): Titan Text Embeddings V2 on-demand is 60 requests a minute on this account (AWS default 6,000) and 300,000 tokens a minute, both "Not adjustable". The slow load was this quota, and it cannot be raised from that page. The other Bedrock models (Nova Lite, Nova Pro, Cohere Rerank) may be reduced the same way; check their quotas before Layers 5 to 7.
+- Confirmed by the human in Service Quotas (us-east-1): Titan Text Embeddings V2 on-demand is 60 requests a minute on this account (AWS default 6,000) and 300,000 tokens a minute, both "Not adjustable". The slow load was this quota, and it cannot be raised from that page. 
+- The human then read the other three quotas (requests a minute, all "Not adjustable", AWS default in brackets): Cohere Rerank 3.5 is 3 (250), Nova Lite 100 (2,000), Nova Pro 13 (250), Nova Pro latency-optimized 1 (10, not used). The rerank quota is the tight one: one call every 20 seconds, so 40 questions take at least 14 minutes per reranked run, and the public demo could rerank only 3 questions a minute. Consequences are written into `CLAUDE.md` (Current status): pace and cache rerank calls at Layer 5, limit and cache reranked runs at Layer 7, print time as well as cost in dry runs, and decide the demo's reranker use in the Cycle 2 plan. Seeing a quota row does not prove access to Cohere; the first call at Layer 5 is still the test.
 
 ## 2026-10-13 — Session 3: Layer 2 (chunking), the first parallel build
 
