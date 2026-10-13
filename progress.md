@@ -8,12 +8,14 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Tell Claude when to start Layer 5 (reranking, single agent). It starts in plan mode. After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
+- [ ] Delete the temporary Marketplace inline policy from the dev IAM user (and detach `AmazonBedrockMarketplaceAccess` if it was attached). The account is subscribed to Cohere Rerank now.
+- [ ] Layer 5 is ready: make the branch, commit, open the PR and merge.
+- [ ] Tell Claude when to start Layer 6 (generation and citations, single agent). It starts in plan mode.
+- [ ] After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
 
 - [ ] Layer 3: start Docker Desktop and run `docker start rag-pg` (the container does not restart on its own).
-- [ ] Layer 5: Cohere Rerank 3.5 access is still unconfirmed (the console check on 2026-10-13 was inconclusive). The first rerank call is the test. If it is refused, the human may need to add Marketplace subscribe permissions to the dev user for a short time, or make the first call from an admin identity.
 - [ ] Layer 7: write about 40 questions in `data/questions.jsonl`, together with Claude, checking each answer against the datasheets.
 
 Done:
@@ -53,7 +55,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 2: chunking. Built and reviewed on 2026-10-13; `tests/test_chunk.py` passes (283 tests) and `runs/chunk_counts.csv` is written. PR #2 merged the same day.
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
 - [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
-- [ ] Layer 5: reranking. `rag/rerank.py` calling Cohere Rerank 3.5, at most 100 documents per call, switchable by config. Verify the API name and request fields first.
+- [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. Not merged yet.
 - [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
 - [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
@@ -69,6 +71,62 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-13 — Session 6: Layer 5 (reranking)
+
+Status at the end: the code and tests are written and the full checks pass with 550 tests (32 new in `tests/test_rerank.py`), and the layer's code review is done. Layer 5 is done: the two-chunk test passed on the real model and the five-question review is in `runs/rerank_review.md`. Cohere access was refused at first and works now (see "Problem"). Nothing is committed; the work is uncommitted on `main` for the human to branch. Next is Layer 6, when the human says so.
+
+What we did:
+
+- Checked against the AWS docs before planning:
+  - Reranking is the `rerank` call on the `bedrock-agent-runtime` client, with one query, a list of inline text sources and the model ARN `arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0`. The answer gives `index` and `relevanceScore` per source.
+  - IAM actions: `bedrock:Rerank` and `bedrock:InvokeModel` on the model. A third-party model also needs `aws-marketplace:ViewSubscriptions` and `aws-marketplace:Subscribe`.
+  - Price: $2.00 per 1,000 queries; one query covers up to 100 documents, and a document over 500 tokens (question included) counts as several.
+- Plan approved by the human (single agent).
+- Built:
+  - `rag/config.py`: `RERANK_MODEL_ID`, `RERANK_ENABLED`, `RERANK_MAX_DOCS = 100`, `RERANK_MIN_INTERVAL_S = 20`, `RERANK_USD_PER_QUERY = 0.002`.
+  - `rag/db.py`: table `rerank_cache` and the functions `cached_rerank_scores`, `store_rerank_scores`.
+  - `rag/rerank.py`: `rerank(conn, question, candidates, k)`, `uncached_count`, `calls_needed`, `rerank_text`, `rerank_key`, `model_arn`.
+  - `tests/test_rerank.py`: 32 tests after the review with a fake client and a fake clock; nothing paid.
+  - `scripts/show_rerank.py`: the two-chunk test, then the five Layer 4 questions before and after reranking. It prints the paid calls and asks first.
+- The dry run printed 6 calls, about $0.012; the human said yes.
+- Real run: the two-chunk test passed (per-pin row 0.4708, total-current row 0.0761; rows of STM32F205 Table 12, page 70). One `rerank` row is in the cost log ($0.002).
+- `CLAUDE.md` updated: the Layer 5 status entry, the Cohere access note, and `rerank_cache` in the Schema section.
+- The layer's one code review (code-review skill): 10 findings. Fixed 4, checks pass after them (550 tests), review recorded with `tools/review_gate.py --reviewed`:
+  - A call is logged to the cost log as soon as its answer arrives, so an incomplete answer or a failed later page is still logged.
+  - The 20 seconds are counted from the end of a request, not its start, so time spent in boto3's retries does not shorten the gap.
+  - The cache key is the model id only. The token limit is not in it, because the cut text is what is hashed; a change of the limit re-sends only the texts it cuts. The two scores of the first real call were stored under the old key, so the two-chunk test is paid once more ($0.002).
+  - Switched off, `rerank` returns copies with `search_score` too, so both paths give the same hit shape.
+- Review findings not changed:
+  - The characters / 4 measure runs low (Titan measured 1.29 times more), so a chunk cut to 400 estimated tokens may be over the 500 tokens AWS counts as one document. With 30 candidates this cannot pass 100 documents, so a call is still one query. A call with close to 100 long documents could be billed as 2 while the log says 1.
+  - The spacing is per process: a second process started within 20 seconds is not held back and relies on the retries.
+  - boto3 may repeat a request after a timeout, and a paged answer is more than one request; both are logged as one query.
+  - Only `scripts/show_rerank.py` creates `rerank_cache` (through `db.create_schema`). It exists in `rag-pg` now; a new database gets it from `create_schema`.
+  - A dry run followed by the real run reads the cache twice.
+- After the access fix: `python scripts\show_rerank.py --yes` made 6 calls ($0.012); a second run made 0. Cost log: 7 `rerank` rows, $0.014 in total.
+- Five-question review (`runs/rerank_review.md`): an answer chunk is at rank 1 for four of five questions (three before). The reworded LM35 question gained the most (answer chunks from 4 and 11 to 1 and 2). The STM32 question is mixed: Table 12 moved to rank 1, but the p104 text chunk left the top 5 and contents pages came in. "TCTH022BE supply voltage" stays at rank 4. Scores differ in level between questions (best hit 0.87 against 0.60).
+
+Problem:
+
+- What: the second rerank call was refused with "not authorized to perform the required AWS Marketplace actions (aws-marketplace:ViewSubscriptions, aws-marketplace:Subscribe)".
+- Why: Cohere Rerank is sold through AWS Marketplace. The first use of such a model makes AWS subscribe the account to it, and the dev user's Bedrock-only policy does not allow that. The first call was answered before AWS finished that check.
+- Fix, as it went: the human added the two actions to the dev user as an inline policy. (The managed policy `AmazonBedrockMarketplaceAccess` was the first idea and is the wrong one: it is for SageMaker-hosted Bedrock Marketplace models and has neither action.) The next run was refused once more, but it started the subscription: AWS emailed that the Cohere Rerank v3.5 offer was accepted (agreement start 21:00 UTC). A run a few minutes later went through.
+
+Decisions:
+
+- The Rerank API is used, not InvokeModel with a Cohere body (that body could not be verified).
+- A score is cached per (question, sent text, model), because the model scores each pair on its own. So a re-run is free, changing k costs nothing, and only texts not seen before are sent.
+- The text sent is cut so that question plus text stay within `RERANK_MAX_TOKENS` (400, characters / 4). The hit keeps its full text. A full `fixed_400` chunk loses its last few dozen characters; `page` and `fixed_1024` chunks are scored on their first part.
+- Calls are spaced 20 seconds apart inside one process; boto3 adaptive retries cover throttling beyond that.
+- The cost log gets one row of 1 query per call (the API does not report billed units).
+- A returned hit is a copy with `score` = relevance score and `search_score` = the score it came in with.
+
+Still open:
+
+- The human: delete the temporary Marketplace inline policy from the dev user, then branch, commit and open the PR.
+- Cycle 2: check that the Lambda role can call Cohere Rerank without the Marketplace actions, now that the account is subscribed.
+- Layer 7: use `rerank.calls_needed` in the dry run and print the time.
+- Cycle 2: `rerank` writes to the database (the cache), like `question_vector`.
 
 ## 2026-10-13 — Session 5: Layer 4 (retrieval), parallel build in progress
 
