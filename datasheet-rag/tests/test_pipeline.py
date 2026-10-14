@@ -94,7 +94,7 @@ def test_no_hits_gives_not_contained_without_a_model_call(steps):
     assert result["answer"] == config.NOT_CONTAINED
     assert result["not_contained"] is True and result["sources"] == []
     # An empty search is flagged, so it is not mistaken for a question the datasheets cannot answer.
-    assert "the search found no chunks" in pipeline.format_answer(result)
+    assert "WARNING: The search found no chunks" in pipeline.format_answer(result)
 
 
 def test_a_real_refusal_is_not_flagged_as_an_empty_search(steps):

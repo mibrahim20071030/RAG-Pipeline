@@ -124,6 +124,13 @@ RAGAS_DIR = RUNS_DIR / "ragas"  # per-answer judge scores, one CSV per experimen
 RAGAS_RESULTS = RUNS_DIR / "results_ragas.csv"  # one summary row per experiment
 RAGAS_SHORTLIST = ("gen_prefix_k10", "gen_prefix_k5", "gen_detect_part", "gen_baseline")
 
+# Local web UI (Layer 8b): `python -m rag.server` serves web/index.html and the JSON API on this machine only.
+WEB_DIR = ROOT / "web"
+SERVER_HOST = "127.0.0.1"  # never 0.0.0.0: anyone who can reach the server can spend on the AWS account
+SERVER_PORT = 8000
+API_MAX_QUESTION_CHARS = 500
+API_MAX_BODY_BYTES = 10_000
+
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")
 PG_PORT = int(os.environ.get("PGPORT", "5432"))

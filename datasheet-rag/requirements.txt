@@ -1,0 +1,8 @@
+# The pipeline, the local web UI and the tests (Python 3.14). The web server uses only the standard library.
+# RAGAS runs in a separate Python 3.13 venv: see requirements-ragas.txt.
+pdfplumber==0.11.10
+psycopg[binary]==3.3.6
+boto3==1.43.111
+numpy==2.5.4
+pytest==9.1.1
+ruff==0.17.0

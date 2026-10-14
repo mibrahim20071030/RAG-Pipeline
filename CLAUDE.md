@@ -109,7 +109,31 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `rag/pipeline.py`: `answer_question(conn, question, document=None, embed_fn=None, rerank_client=None, generate_client=None)` returns the `generate` result plus `question`, `passages`, `timings_ms` (`search` includes the question embed, `rerank`, `generate`). `format_answer(result)`. The CLI (`--document` optional) does not ask before paid calls (human's choice); it prints the spend afterwards. A new question costs about $0.0023, a cached one about $0.0003.
   - Checked on 2026-10-14: q01, q18, q29 cite the right page, q47 refused, a new TCTH question answered from page 2. Cycle 1 spend in total: $2.23.
   - The reworded-refusal miss stays a known limit (human's choice).
-- Next: the human's PR for Layer 8, then Cycle 2 step 1, in plan mode, when the human says so.
+- Layer 8 merged as PR #9 (`ead7ff3`).
+- Layer 8b: BUILT on 2026-10-14 (single agent). It needs its own PR, since Layer 8 is already merged. It adds a local web UI and a README written for recruiters.
+  - `rag/api.py`: `ask(conn, payload, answer_fn=None) -> (status, body)` and `documents(conn)`, with no HTTP, so a Cycle 2 handler can call them unchanged.
+    - Errors: 400 for an empty question, more than `API_MAX_QUESTION_CHARS` (500) characters, or an unknown document; 429 when AWS throttles; 502 for other AWS failures or a step's `RuntimeError`; 503 when the database is down.
+    - Sources carry `pdf_url` = `/pdfs/<file>#page=<page>`.
+  - `rag/server.py`: `python -m rag.server [--port]`, standard library `HTTPServer`.
+    - Binds only to `127.0.0.1`, and rejects requests whose Host header is not localhost (DNS rebinding).
+    - `POST /api/ask` needs `Content-Type: application/json`, which stops cross-site form posts.
+    - `/pdfs/<file>` serves only files on the stored documents' allow-list.
+    - It keeps one DB connection and reconnects after Postgres restarts.
+  - `web/index.html`: one static page using the `ui-ux-pro-max` design system.
+    - Dark by default, plus a light theme. Fonts: JetBrains Mono and IBM Plex Sans. Icons: Lucide.
+    - `[n]` badges link to source cards, which open the PDF at the cited page.
+    - Deep links: `?q=...&doc=...` fills in the question and asks it.
+    - Audited with `web-design-guidelines`.
+  - `pipeline.warnings(result)` is public. Cost per request comes from `costlog.row_count()` and `costlog.spent_since(n)`, which `pipeline`, `api` and `run_eval` all use.
+  - `generate.citation_spans(answer, chunks)` gives the citing brackets by the rules of `resolve_citations`. The API returns them as `answer_parts`, and the page links only those.
+  - A `?q=` link only fills in the form and never asks, because asking costs money.
+  - The server returns a JSON 500 for any unexpected error, has a 15 s socket timeout, and reads the PDF allow-list once.
+  - Code review: 1 of 2 for Layer 8b, done and recorded. 857 tests pass.
+  - Settings: `WEB_DIR`, `SERVER_HOST`, `SERVER_PORT`, `API_MAX_QUESTION_CHARS`, `API_MAX_BODY_BYTES`.
+  - Install file: `datasheet-rag/requirements.txt` (pinned). The README screenshot is `docs/ui.png`, taken with headless Edge (`--force-dark-mode`; headless Edge cannot go narrower than about 492 px).
+  - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
+  - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
+- Next: the human's PR for Layer 8b, then Cycle 2 step 1, in plan mode, when the human says so.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -195,7 +219,7 @@ Rules for the agents (also written into each definition):
 | Vector index | None in Cycle 1 (exact search). HNSW is an experiment that measures index recall. Cycle 2 uses exact search. | A few thousand chunks do not need an index. |
 | recall@k definition | Hit rate: for each question, 1 if at least one correct chunk is in the top k, else 0, averaged over questions. A question may list several acceptable (doc, page) pairs. | Defined once, used everywhere. MRR is reported alongside. |
 | Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 10 (frozen at Layer 8; k 5 was the start value). | k 10 cut false refusals from 6 to 2 (Layer 7). |
-| Frontend | One plain HTML page with `fetch`, hosted as a static website in S3 | No framework needed. |
+| Frontend | One static HTML page with `fetch` (`datasheet-rag/web/index.html`), served by `rag/server.py` locally in Cycle 1 and from S3 in Cycle 2 | No framework or build step. Built in Layer 8b. |
 | Public demo | Throttled API Gateway plus Lambda concurrency cap. Torn down after publishing. A recorded demo and the repo stay as the portfolio artifact. | A public URL is the main spending risk. |
 
 ## Architecture
@@ -232,6 +256,8 @@ rag/
   rerank.py        # Cohere Rerank 3.5 call
   generate.py      # build_prompt, call_llm, resolve_citations
   pipeline.py      # answer_question(question) calling the steps in order
+  api.py           # the web page's JSON API without HTTP (Layer 8b)
+  server.py        # local HTTP server for web/index.html, the API and the PDFs (Layer 8b)
   eval/
     metrics.py     # recall_at_k, mrr
     run_eval.py    # runs a strategy over the question set, logs metrics, latency, cost
@@ -242,7 +268,7 @@ data/
 runs/              # eval outputs and cost_log.csv
 tests/
 handler.py         # Cycle 2 Lambda entry point
-web/index.html     # Cycle 2 frontend
+web/index.html     # the frontend: served locally (Layer 8b), from S3 in Cycle 2
 ```
 
 ## Cycle 1: build the pipeline and the evaluation locally (full detail)
@@ -500,6 +526,8 @@ python -m rag.eval.run_eval baseline               # real run, asks first; --yes
 .venv-ragas\Scripts\python -m rag.eval.ragas_run --shortlist --dry-run   # RAGAS judge (Python 3.13 venv); --limit N, --yes
 pytest -q tests/test_judge.py
 python -m rag.pipeline "What is the maximum supply voltage?"
+python -m rag.server                                # web UI at http://127.0.0.1:8000
+pytest -q tests/test_api.py tests/test_server.py
 ```
 
 ## Definition of done

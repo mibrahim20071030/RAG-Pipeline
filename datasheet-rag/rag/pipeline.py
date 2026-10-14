@@ -55,6 +55,20 @@ def answer_question(conn, question: str, document: str | None = None, embed_fn=N
             "timings_ms": {"search": search_ms, "rerank": rerank_ms, "generate": generate_ms}}
 
 
+def warnings(result: dict) -> list[str]:
+    """What a reader should know about an answer beyond its text: an empty search, invalid labels, a cut-off."""
+    found = []
+    if result.get("passages") == []:
+        # Not the same as a question the datasheets cannot answer: nothing was searched or nothing is stored.
+        found.append(f"The search found no chunks. The question has no searchable word, or strategy "
+                     f"{config.DEFAULT_STRATEGY!r} is not loaded (check with: python scripts\\show_db.py).")
+    if result["invalid"]:
+        found.append(f"The answer cites passages that do not exist: {result['invalid']}")
+    if result["cut_off"]:
+        found.append(f"The answer was cut off at {config.GENERATE_MAX_TOKENS} tokens.")
+    return found
+
+
 def format_answer(result: dict) -> str:
     """The answer for a reader: the text, then each cited source as datasheet and PDF page, then any warning."""
     lines = [result["answer"].strip(), ""]
@@ -63,34 +77,8 @@ def format_answer(result: dict) -> str:
         lines += [f"  [{source['label']}] {generate.passage_label(source)}" for source in result["sources"]]
     else:
         lines.append("Sources: none")
-    if result.get("passages") == []:
-        # Not the same as a question the datasheets cannot answer: nothing was searched or nothing is stored.
-        lines.append(f"WARNING: the search found no chunks. The question has no searchable word, or strategy "
-                     f"{config.DEFAULT_STRATEGY!r} is not loaded (check with: python scripts\\show_db.py).")
-    if result["invalid"]:
-        lines.append(f"WARNING: the answer cites passages that do not exist: {result['invalid']}")
-    if result["cut_off"]:
-        lines.append(f"WARNING: the answer was cut off at {config.GENERATE_MAX_TOKENS} tokens.")
+    lines += [f"WARNING: {warning}" for warning in warnings(result)]
     return "\n".join(lines)
-
-
-def _logged_rows() -> int | None:
-    """The number of rows in the cost log; None when it cannot be read (for example, open in Excel)."""
-    try:
-        return len(costlog.read_rows())
-    except (OSError, ValueError):
-        return None
-
-
-def _spent_since(logged_before: int | None) -> float | None:
-    """Cost of the cost log rows added since `logged_before` rows; None when the log cannot be read.
-    Rows another process writes meanwhile (an eval run in a second terminal) are counted too."""
-    if logged_before is None:
-        return None
-    try:
-        return sum((float(row["est_cost_usd"]) for row in costlog.read_rows()[logged_before:]), 0.0)
-    except (OSError, ValueError, TypeError, KeyError):
-        return None
 
 
 def main(argv: list[str]) -> None:
@@ -104,7 +92,7 @@ def main(argv: list[str]) -> None:
         conn = db.connect()
     except psycopg.OperationalError as error:
         sys.exit(f"Cannot reach Postgres ({error}).\nStart Docker Desktop, then run: docker start rag-pg")
-    logged_before = _logged_rows()
+    logged_before = costlog.row_count()
     with conn:
         try:
             result = answer_question(conn, args.question, document=args.document)
@@ -120,7 +108,7 @@ def main(argv: list[str]) -> None:
     print(f"\n{config.DEFAULT_STRATEGY}, {config.SEARCH_MODE} search {config.N_CANDIDATES}, rerank to "
           f"{config.TOP_K}, {config.GENERATE_MODEL_ID}. Search {timings['search']:.0f} ms, rerank "
           f"{timings['rerank']:.0f} ms, answer {timings['generate']:.0f} ms.")
-    spent = _spent_since(logged_before)
+    spent = costlog.spent_since(logged_before)
     print(f"Spent: ${spent:.4f} (cost log {config.COST_LOG})" if spent is not None
           else f"Could not read the cost log. Check {config.COST_LOG} by hand.")
 
