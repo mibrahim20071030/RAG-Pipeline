@@ -83,6 +83,16 @@ RERANK_MAX_DOCS = 100  # documents per call: one billed query covers up to 100
 RERANK_MIN_INTERVAL_S = 20  # seconds between calls: the account's quota is 3 requests a minute
 RERANK_USD_PER_QUERY = 0.002  # $2.00 per 1,000 queries
 
+# Generation. Converse API fields checked against the Bedrock user guide on 2026-10-14. Price verified by the human
+# on the Bedrock pricing page on 2026-10-14: $0.06 / $0.24 per 1M input / output tokens (Standard tier, on-demand).
+GENERATE_MODEL_ID = "amazon.nova-lite-v1:0"
+GENERATE_MAX_TOKENS = 512  # longest answer, in tokens
+GENERATE_TEMPERATURE = 0.0
+GENERATE_USD_PER_1K_INPUT = 0.00006
+GENERATE_USD_PER_1K_OUTPUT = 0.00024
+# The model is told to reply with exactly this sentence when the passages do not hold the answer.
+NOT_CONTAINED = "The provided datasheets do not contain this information."
+
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")
 PG_PORT = int(os.environ.get("PGPORT", "5432"))

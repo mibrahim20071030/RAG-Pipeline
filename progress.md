@@ -8,7 +8,9 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Tell Claude when to start Layer 6 (generation and citations, single agent). It starts in plan mode.
+- [ ] Layer 6: make the branch, commit, open the PR and merge. Changed files: `datasheet-rag/rag/config.py`, `datasheet-rag/rag/generate.py`, `datasheet-rag/tests/test_generate.py`, `datasheet-rag/scripts/show_generate.py`, `CLAUDE.md`, `progress.md`.
+- [ ] Tell Claude when to start Layer 7 (evaluation, parallel build). It starts in plan mode, and the questions are written together.
+- [x] 2026-10-14: Nova Lite price confirmed on the pricing page; Layer 6 smoke run approved and passed 6 of 6.
 - [ ] After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
@@ -54,7 +56,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
 - [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
 - [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
-- [ ] Layer 6: generation and citations. `build_context`, `build_prompt`, `call_llm` (Nova Lite through the Converse API) and `resolve_citations` in `rag/generate.py`. Test: `tests/test_generate.py`, and 3 answerable plus 3 unanswerable questions recorded in `runs/generation_smoke.md`.
+- [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`).
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
 - [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
 
@@ -69,6 +71,60 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-14 — Session 7: Layer 6 (generation and citations)
+
+Status at the end: Layer 6 is done. The smoke run passed 6 of 6, the code review is done and recorded, and the full checks pass with 589 tests (39 in `tests/test_generate.py`). Ready for the human's branch and PR. Next is Layer 7, when the human says so.
+
+Later the same session:
+
+- The human confirmed the Nova Lite price on the pricing page: $0.06 / $0.24 per 1M input / output tokens (Standard tier). It matches `rag/config.py`.
+- Smoke run (`python scripts\show_generate.py --yes`), results in `runs/generation_smoke.md`: 6 of 6 passed. STM32F205 per-pin current 25 mA citing p70, LM35 10 mV/°C citing p1 and p13, ESP32 2.3 V to 3.6 V citing p19; the price, Bluetooth and STM32H743 questions got the fixed sentence. Cost $0.0130 (6 rerank queries $0.012, 6 answers $0.00099, embeddings $0.0000016). Nova Lite answered in 0.3 to 0.6 s. The ESP32 answer is right but leaves out the 3.3 V recommended value and the Table 5-2 note.
+- The layer's code review (code-review skill, medium): 10 findings. Fixed 8; checks pass after them (589 tests); recorded with `tools/review_gate.py --reviewed` (review 1 of 2). The fixes:
+  - A label glued to a word (`25 mA[1]`) was ignored. Now it counts unless that word with the same brackets is in a passage, which means a copied footnote marker (`GPIO16[2]`).
+  - Ranges `[1-3]` were dropped without notice. Now they are written out; a range end past the passages is reported invalid.
+  - `is_not_contained` was true for a cited answer that also had the sentence, and false when the final full stop was left out. Now it needs no valid source, and the full stop is optional.
+  - The system prompt was filled in at import, so a changed `NOT_CONTAINED` would not reach it. Now `system_prompt()` builds it at each call.
+  - A cut-off answer (`max_tokens`) was not marked. `generate` now returns `cut_off`, and the smoke check fails it.
+  - The smoke check passed a citation of the right datasheet on the wrong page. Now that is a FAIL.
+  - A blocked answer crashed the smoke script. Now that question is a FAIL and the run goes on.
+  - The price comment in `rag/config.py` now says the human verified it.
+- Not changed:
+  - A footnote marker standing alone in a passage (`Note: [3]`) looks like a passage label to the model. Different passage labels (such as `[P3]`) would remove this, but CLAUDE.md fixes the `[n]` form and the smoke run showed no confusion. Watch for it in Layer 7.
+  - `_bedrock()` is the third copy of the client factory (embed, rerank, generate). Left as it is; worth one shared helper when Cycle 2 changes client settings.
+  - The smoke script searches each cached question twice (estimate, then run). Free, so left.
+- The smoke run was not repeated after the fixes. The six answers it got resolve the same way under the new rules, and a re-run would be paid.
+
+What we did:
+
+- Readiness check: `main` clean, Layer 5 merged. Docker was not running at first; later in the session `rag-pg` was up.
+- Checked against the AWS docs: Converse is on the `bedrock-runtime` client (`modelId`, `system`, `messages`, `inferenceConfig` with `maxTokens` and `temperature`); the answer has `output.message.content[].text`, `stopReason`, `usage.inputTokens` / `outputTokens`, `metrics.latencyMs`. It needs `bedrock:InvokeModel`, which the dev user has on Nova Lite.
+- Nova Lite price from an AWS blog: $0.06 per 1M input and $0.24 per 1M output tokens. The live pricing page could not be read (drawn by script); the human is to confirm it.
+- Plan approved by the human (single agent). Built:
+  - `rag/config.py`: `GENERATE_MODEL_ID`, `GENERATE_MAX_TOKENS = 512`, `GENERATE_TEMPERATURE = 0.0`, the two prices, `NOT_CONTAINED`.
+  - `rag/generate.py`: `passage_label`, `build_context`, `SYSTEM_PROMPT`, `build_prompt`, `call_llm`, `resolve_citations`, `is_not_contained`, `generate`.
+  - `tests/test_generate.py`: 30 tests with a fake client; nothing paid.
+  - `scripts/show_generate.py`: 3 answerable and 3 unanswerable questions through hybrid search, rerank and Nova Lite, with PASS/FAIL. Dry run: 6 embeddings, at most 6 rerank calls, 6 answers, about $0.0135 and 100 seconds of waiting. Stopped at the question; nothing paid yet.
+
+Decisions:
+
+- A passage is labelled `[n] <part> (<document>), page <page>`, plus the printed page when it differs. Chunks keep their full text.
+- When the passages do not hold the answer, the model must reply with one fixed sentence (`config.NOT_CONTAINED`), so "not contained" is detected exactly, not guessed.
+- Citations accepted: `[n]`, `[n, m]`, `[n][m]`, `[n] [m]`. Ranges like `[1-3]` are not read; the prompt asks for separate labels.
+- Each call writes two cost log rows: input tokens and output tokens, each with its own price. A failed log write only warns.
+- A stop reason other than `end_turn` or `max_tokens` raises, after the cost is logged.
+- No answer cache: the calls cost almost nothing and the quota is 100 a minute.
+
+Problems:
+
+- What: a datasheet footnote marker such as `GPIO16[2]` looks exactly like the citation `[2]`. Why: the parser writes bare footnote markers in brackets (Layer 1), and the model may copy them. Fix: a bracket glued to a letter or digit is not read as a citation, and the prompt asks for a space before each `[n]`. Tested.
+- What: the plan's expected ESP32 answer (3.0 V to 3.6 V) was a guess. Why: written before reading the datasheet. Fix: the parsed text says 2.3 V to 3.6 V (p19, Table 5-2 p51); the script expects that.
+
+Still open:
+
+- Human: branch, commit, PR and merge for Layer 6.
+- Layer 7: reworded refusals are not detected as "not contained"; check the unanswerable questions' answers by eye. Watch whether answers leave out conditions (the ESP32 case).
+- Cycle 2: `generate` makes no database writes; the client factory is repeated in three modules.
 
 ## 2026-10-13 — Session 6: Layer 5 (reranking)
 
