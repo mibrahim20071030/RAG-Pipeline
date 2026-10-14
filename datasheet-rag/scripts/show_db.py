@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import psycopg
 
-from rag import chunk, config, db, load, parse
+from rag import config, db, load, parse
 
 
 def main() -> None:
@@ -22,17 +22,20 @@ def main() -> None:
         db.create_schema(conn)
         stored = db.strategy_counts(conn)
         ok = True
-        expected_pairs = {(d, s) for d in load.parsed_documents() for s in config.CHUNK_STRATEGIES}
+        expected_pairs = {(d, s) for d in load.parsed_documents() for s in load.strategy_names()}
+        # The header-prefix strategies are loaded only for the Layer 7 experiment; they are checked when stored.
+        stored_strategies = {strategy for _, strategy in stored}
+        strategies = [s for s in load.strategy_names() if s in config.CHUNK_STRATEGIES or s in stored_strategies]
         for (document, strategy), count in sorted(stored.items()):
             if (document, strategy) not in expected_pairs:
                 ok = False
                 print(f"STALE: {count} stored rows for {document} / {strategy}, which Layer 2 no longer produces")
         print(f"{'document':34} {'strategy':18} {'chunks':>7} {'stored':>7}")
-        totals = dict.fromkeys(config.CHUNK_STRATEGIES, 0)
+        totals = dict.fromkeys(strategies, 0)
         for document in load.parsed_documents():
             parsed = parse.load_parsed(document)
-            for strategy in config.CHUNK_STRATEGIES:
-                expected = len(chunk.chunk_document(parsed, strategy))
+            for strategy in strategies:
+                expected = len(load.strategy_inputs(parsed, strategy)[0])
                 found = stored.get((document, strategy), 0)
                 totals[strategy] += found
                 ok &= expected == found

@@ -8,15 +8,17 @@ Next session:
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
-- [ ] Layer 6: make the branch, commit, open the PR and merge. Changed files: `datasheet-rag/rag/config.py`, `datasheet-rag/rag/generate.py`, `datasheet-rag/tests/test_generate.py`, `datasheet-rag/scripts/show_generate.py`, `CLAUDE.md`, `progress.md`.
-- [ ] Tell Claude when to start Layer 7 (evaluation, parallel build). It starts in plan mode, and the questions are written together.
+- [x] 2026-10-14: PR #6 (Layer 6, generation and citations) merged into `main` (`b57b216`).
+- [x] 2026-10-14: Layer 7a plan approved (split: 7a now, RAGAS as 7b later; Claude drafts the questions, you check; reranker on for all 7 chunking strategies).
+- [ ] Check every question in `datasheet-rag/runs/questions_draft.md` against the PDF: mark each OK / FIX / CUT. Only approved ones go into `data/questions.jsonl`.
 - [x] 2026-10-14: Nova Lite price confirmed on the pricing page; Layer 6 smoke run approved and passed 6 of 6.
 - [ ] After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
 Needed later:
 
 - [ ] Layer 3: start Docker Desktop and run `docker start rag-pg` (the container does not restart on its own).
-- [ ] Layer 7: write about 40 questions in `data/questions.jsonl`, together with Claude, checking each answer against the datasheets.
+- [x] Layer 7a: approve each paid evaluation run after its dry run (done 2026-10-14; $1.31 in total).
+- [ ] Layer 7b (RAGAS with Nova Pro): its own plan later; check the Nova Pro price and RAGAS support for Python 3.14 first.
 
 Done:
 
@@ -56,7 +58,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 3: embeddings and storage. Built, loaded and reviewed on 2026-10-13: row counts match Layer 2 (5,501), `vector_dims` is 1024, a re-run changes nothing and costs nothing. PR #3 merged the same day.
 - [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
 - [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
-- [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`).
+- [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`). PR #6 merged the same day.
 - [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
 - [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
 
@@ -72,9 +74,78 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
 
+## 2026-10-14 — Session 8: Layer 7a (evaluation), parallel build in progress
+
+Status at the end: the plan is approved and the build is under way. Agents A (metrics, question loader) and B (runner, experiments, HNSW functions) are done and pass their own checks; the test writer is still working. The question draft is waiting for the human's check. No paid call was made.
+
+Decisions (with the human):
+- Layer 7 is split. 7a: questions, metrics, `run_eval`, every retrieval comparison, answers and cheap answer checks for a shortlist. 7b: RAGAS with Nova Pro, planned later, because RAGAS on Python 3.14 and the Nova Pro price are not checked yet.
+- Claude drafts the questions from the datasheet text (not from search results); the human checks each one against the PDF.
+- The reranker is on for all 7 chunking strategies (about 280 rerank calls, about 95 minutes at 3 a minute, about $0.57).
+- One experiment run gives two result rows: the search order (reranker off) and the reranked order (on). The reranker keeps 10 in eval, so recall@1/3/5/10 and MRR@10 all come from one list at no extra cost.
+- Experiments are a Python dict in `rag/eval/experiments.py`; no YAML (PyYAML is not installed and is not needed). CLI: `python -m rag.eval.run_eval <names> | --group <g> | --all [--dry-run] [--yes] [--questions PATH]`.
+- HNSW is measured without changing the database: the index is built inside a transaction that is always rolled back. pgvector 0.8.7 is installed, so `hnsw.iterative_scan` keeps the strategy filter from returning too few rows. Agent B found that Postgres also needs `enable_sort = off` to use the index; with it, HNSW returned the same 30 of 30 chunks as exact search on a check question.
+- Header prefix: strategy `<name>_prefix` stores the same chunks, embedded with "part (document). section" on a line before the text (`load.embed_input`, `load.strategy_inputs`, `config.HEADER_PREFIX`). A plan-only run for `fixed_400_prefix`: 769 texts, about $0.004.
+
+Files so far: `rag/eval/questions.py`, `rag/eval/metrics.py`, `rag/eval/experiments.py`, `rag/eval/run_eval.py`, HNSW functions in `rag/db.py`, eval settings and `HEADER_PREFIX` in `rag/config.py`, the prefix in `rag/load.py`, `runs/questions_draft.md` (49 draft questions).
+
+Problems: printing datasheet text to the Windows console failed on symbols such as Ω (the console uses an old character set). Worked around by writing the text to files; no project code affected.
+
+Integration (later the same session): all three agents reported; `tools/checks.py` passes with 752 tests (163 new in `test_metrics.py`, `test_questions.py`, `test_run_eval.py`). Two fixes:
+- `run_eval._upsert` put brand-new result rows at the place of the first replaced row; the contract (and the test) say new rows go at the end. Fixed: a replaced row keeps its place, a new key is appended.
+- `db.hnsw_index_count` read `pg_indexes`, which builds the definition text of indexes in every schema and failed once when another test run dropped its throwaway schema at the same time. It now reads `pg_index`/`pg_class`/`pg_am` for the current schema only.
+- Not covered by tests, by choice: `main`/the CLI (checked by hand with the dry run) and `write_by_type` (its signature was left to the builder).
+
+Questions (later the same session): the human asked Claude to do the check. Claude rendered the 33 cited PDF pages to images with pdfplumber (the PDF reader of the tools needs poppler, which is not installed) and compared every table value. All 49 matched except q32 (STM32 junction temperature), which now also cites page 71 and gives the per-suffix range. All 49 are in `data/questions.jsonl` and load cleanly: 22 table lookups, 10 single values, 6 rephrased, 5 comparisons, 6 no answer. Side finding: the extracted text of the second table on TCTH page 9 swaps two α column labels (no question uses it).
+
+Dry run of `--all` (no call made, cost log unchanged): 49 embeds, at most 686 rerank calls ($1.37, about 230 minutes). That count is an upper bound, because before the question vectors exist the dry run counts one rerank call per question per experiment; experiments on `fixed_400` share most candidates. `header_prefix` searches nothing until `fixed_400_prefix` is loaded.
+
+Run 1 (approved by the human): baseline plus the six chunking experiments, 49 embeds and 343 rerank calls, $0.686, about 115 minutes. recall@5 / MRR@10 on the 43 answerable questions, search order then reranked: baseline `fixed_400` 0.930 / 0.766 then 0.977 / 0.855; `page` 0.837 / 0.651 then 0.860 / 0.767; `fixed_256` 0.930 / 0.767 then 0.953 / 0.834; `fixed_256_overlap` 0.930 / 0.748 then 0.930 / 0.841; `fixed_400_overlap` 0.907 / 0.765 then 0.953 / 0.843; `structure_aware` 0.953 / 0.770 then 0.977 / 0.844; `fixed_1024` 0.930 / 0.749 then 0.977 / 0.865. One question is 0.023, so most gaps are one or two questions. `page` is clearly worst; the reranker lifts MRR by about 0.08 everywhere. q33 (five-volt-tolerant pin, rephrased) is missed by every strategy; q42 (LM35 vs TCTH supply) is missed at 5 by four. `fixed_400` stays the base for the next runs.
+
+Dry run for Run 2 (`vector_only`, `keyword_only`, `simple_hybrid`, `simple_keyword_only`, `detect_part`, `hnsw`): 0 embeds, 283 rerank calls, $0.566, about 94 minutes. More than the plan's ~160, because each search mode brings new candidates to score.
+
+Run 2 (approved): $0.430 spent (below the estimate, because more scores were already cached than the dry run counted), about 80 minutes. Search order then reranked, recall@5 / MRR@10: `vector_only` 0.814 / 0.674 then 0.977 / 0.848; `keyword_only` 0.860 / 0.665 then 0.977 / 0.874; `simple_hybrid` 0.907 / 0.688 then 0.953 / 0.855; `simple_keyword_only` 0.767 / 0.556 then 0.930 / 0.833; `detect_part` 0.930 / 0.774 then 0.977 / 0.871; `hnsw` identical to `vector_only`, index recall 0.995, and no HNSW index left afterwards. Read: hybrid is the best search order (0.930 at 5 against 0.81 and 0.86), but after reranking hybrid, vector and keyword all reach 0.977, so the reranker hides the gap at k = 5; `english` beats `simple` in both modes; `detect_part` gives the best search-order MRR and does not lose a question. Vector search finds q33 nowhere and keyword search finds q42 nowhere, which is why hybrid has both.
+
+Header-prefix load dry run (`python -m rag.load --strategy fixed_400_prefix`): 797 chunks, 769 texts to embed, about $0.004 and about 13 minutes at 60 calls a minute.
+
+Header prefix (approved): load $0.0049 (245,249 real tokens, 1.3 times the estimate as at Layer 3), 797 chunks stored; run 42 rerank calls, $0.084. Search order recall@1 / @5 / MRR@10 0.767 / 0.953 / 0.834 against 0.651 / 0.930 / 0.766 for plain `fixed_400`, the largest search-order gain of any experiment; reranked 0.977 / 0.865 against 0.977 / 0.855. Only q33 is missed after reranking.
+
+Generation group added to `rag/eval/experiments.py`: `gen_baseline`, `gen_fixed_1024`, `gen_detect_part`, and `gen_prefix_k3` / `_k5` / `_k10` (k on the header prefix, the best search order). Dry run: 294 Nova Lite calls, no rerank or embed call (all cached), about $0.042.
+
+Generation run 1 (approved): 294 Nova Lite calls, $0.050. Reading the flagged answers found two problems, both fixed with the human's yes:
+- Nova Lite sometimes writes the refusal sentence and then labels (`... information. [1] [2] [3]`); `is_not_contained` called that an answer, so "unanswerable refused" showed 67–83 % when it was 6 of 6 everywhere, and refusals counted as citation hits. Fix: `is_not_contained` is also true when the answer minus its labels is just the sentence; `citation_hit_rate` counts a refusal as a miss. Tests added.
+- Nova Lite refused answerable questions whose answer was in a passage (q25: passage [2] gives tRST 50 µs). The prompt now has a rule to read every passage, tables included, and answer if one gives the fact even in other words, and the sentence is to be given with no citation.
+Recount of run 1 under the fixed check (right page cited / answerable refused / unanswerable refused): baseline 36/43, 7, 6/6; fixed_1024 34/43, 7, 6/6; detect_part 36/43, 7, 6/6; prefix k3 36/43, 5, 6/6; prefix k5 37/43, 6, 6/6; prefix k10 40/43, 3, 6/6. Its per-question answers are kept in `runs/eval/gen_old_prompt/`. Also seen: q02 answered 67 µA (the LM35A limit, not the LM35's 80 µA) with fixed_1024 and prefix k3; q24 found the right page but not the chunk with the DAC sentence.
+
+Generation run 2 (new prompt and check): $0.051. Right page cited / answerable refused / unanswerable refused: baseline 36/43, 7, 6/6; fixed_1024 36/43, 6, 6/6; detect_part 37/43, 6, 6/6; prefix k3 34/43, 7, 6/6; prefix k5 37/43, 6, 6/6; prefix k10 40/43, 2, 5/6. The one miss is q44, a reworded refusal ("Sorry, I cannot provide ...") the check does not catch, so it is really 6/6. The prompt change made no measurable difference (moves of one or two questions both ways); it is kept but not counted as an improvement. False refusals (q22, q24, q25, q27) remain the main answer failure.
+
+Bug found while reading the results: `runs/results_by_type.csv` had only the `comparison` rows, because the merge key was (experiment, rerank) and each type replaced the one before. Fixed: `_key` in `run_eval.py` now includes the type, with a test. The file was rebuilt from `runs/eval/*.csv`, with no call: 160 rows.
+
+`runs/eval_review.md` written: the full results table, failures by question type, a read of the flagged answers, and the 7b shortlist (prefix k10, prefix k5, detect_part k5, baseline). Layer 7a total spend $1.31, of which $1.20 was reranking.
+
+`CLAUDE.md` updated: the Layer 7a status (files, results, shortlist, Layer 6 changes, spend), "Next" set to Layer 7b, and the `run_eval` test commands.
+
+Code review of Layer 7a (built-in skill, review 1 of 2, recorded with `tools/review_gate.py --reviewed`). Ten findings. Fixed:
+- HNSW `search_ms` timed the throwaway index build; it is now left empty.
+- `plan_run` planned HNSW rerank calls from exact search; it now plans them from the HNSW hits. A dry run of `hnsw` shows 3 calls the old plan missed. Run 2 still spent less than its estimate.
+- `scripts/show_db.py` called stored `_prefix` strategies STALE. It now checks them against their base strategy's count and ends with OK.
+- `generate` kept the sources of a refusal followed by labels; it now returns none.
+- A non-text id or source document in `questions.jsonl` raised TypeError; it now raises ValueError naming the line.
+- `_mean_chunk_tokens` fetched every chunk; it is now one SQL average, `db.mean_chunk_tokens`.
+- `_spent_since` could hide the error that stopped a run when the cost log is malformed; it now warns and returns None.
+
+Reported, not fixed:
+- A run with `--questions <other file>` overwrites the real results under the same experiment names.
+- A question with no words is embedded in eval, where `search.search` would skip it; every frozen question has words.
+- `run_question` looks up the question vector cache twice.
+
+Checks pass: 759 tests.
+
+Still open: the file list for the PR (handed over), then Layer 7b.
+
 ## 2026-10-14 — Session 7: Layer 6 (generation and citations)
 
-Status at the end: Layer 6 is done. The smoke run passed 6 of 6, the code review is done and recorded, and the full checks pass with 589 tests (39 in `tests/test_generate.py`). Ready for the human's branch and PR. Next is Layer 7, when the human says so.
+Status at the end: Layer 6 is done. The smoke run passed 6 of 6, the code review is done and recorded, and the full checks pass with 589 tests (39 in `tests/test_generate.py`). Merged by the human as PR #6 (`b57b216`). Next is Layer 7, when the human says so.
 
 Later the same session:
 
@@ -122,7 +193,6 @@ Problems:
 
 Still open:
 
-- Human: branch, commit, PR and merge for Layer 6.
 - Layer 7: reworded refusals are not detected as "not contained"; check the unanswerable questions' answers by eye. Watch whether answers leave out conditions (the ESP32 case).
 - Cycle 2: `generate` makes no database writes; the client factory is repeated in three modules.
 

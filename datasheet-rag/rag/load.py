@@ -21,9 +21,28 @@ from rag.chunk_base import approx_tokens
 from rag.embed import embed_key, text_hash
 
 
-def embed_input(chunk_: dict) -> str:
-    """The string that is embedded for a chunk. The header-prefix experiment (Layer 7) changes only this."""
-    return chunk_["text"]
+def embed_input(chunk_: dict, prefixed: bool = False) -> str:
+    """The string that is embedded for a chunk: its text, or for the header-prefix experiment (Layer 7) the
+    part, document and section on a line before it. The stored text is the plain text either way."""
+    if not prefixed:
+        return chunk_["text"]
+    part = config.DOCUMENTS.get(chunk_["document"], {}).get("part")
+    header = f"{part} ({chunk_['document']})" if part else chunk_["document"]
+    if chunk_.get("section"):
+        header += f". {chunk_['section']}"
+    return f"{header}\n{chunk_['text']}"
+
+
+def strategy_names() -> list[str]:
+    """Every strategy that can be loaded: the chunking strategies, and each with the header prefix."""
+    return [*config.CHUNK_STRATEGIES, *(name + config.HEADER_PREFIX for name in config.CHUNK_STRATEGIES)]
+
+
+def strategy_inputs(parsed: dict, strategy: str) -> tuple[list[dict], list[str]]:
+    """The chunks of a (possibly prefixed) strategy and the string embedded for each."""
+    base = strategy.removesuffix(config.HEADER_PREFIX)
+    chunks = chunk.chunk_document(parsed, base)
+    return chunks, [embed_input(c, prefixed=base != strategy) for c in chunks]
 
 
 def parsed_documents() -> list[str]:
@@ -37,9 +56,9 @@ def plan_load(conn, documents: list[str], strategies: list[str]) -> dict:
     for document in documents:
         parsed = parse.load_parsed(document)
         for strategy in strategies:
-            chunks = chunk.chunk_document(parsed, strategy)
+            chunks, inputs = strategy_inputs(parsed, strategy)
             counts[(document, strategy)] = len(chunks)
-            texts.update((text_hash(embed_input(c)), embed_input(c)) for c in chunks)
+            texts.update((text_hash(text), text) for text in inputs)
     cached = db.cached_hashes(conn, list(texts), embed_key())
     est_tokens = sum(approx_tokens(text) for key, text in texts.items() if key not in cached)
     return {
@@ -58,8 +77,7 @@ def load_document(conn, parsed: dict, strategy: str, embed_fn=embed.embed_texts)
     `embed_fn(texts, label=...)` returns one vector per text, in order.
     """
     document = parsed["document"]
-    chunks = chunk.chunk_document(parsed, strategy)
-    inputs = [embed_input(c) for c in chunks]
+    chunks, inputs = strategy_inputs(parsed, strategy)
     hashes = [text_hash(text) for text in inputs]
     key = embed_key()
 
@@ -105,7 +123,8 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--run", action="store_true", help="embed and store; without it only the cost is printed")
     parser.add_argument("--yes", action="store_true", help="with --run: do not ask before the paid calls")
     parser.add_argument("--doc",choices=parsed_documents(), help="one parsed datasheet (default: all)")
-    parser.add_argument("--strategy", choices=list(config.CHUNK_STRATEGIES), help="one strategy (default: all)")
+    parser.add_argument("--strategy", choices=strategy_names(),
+                        help="one strategy (default: all without the header prefix)")
     args = parser.parse_args(argv)
     documents = [args.doc] if args.doc else parsed_documents()
     strategies = [args.strategy] if args.strategy else list(config.CHUNK_STRATEGIES)

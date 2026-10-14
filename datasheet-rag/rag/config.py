@@ -56,6 +56,9 @@ CHUNK_STRATEGIES = {
     "structure_aware": {"size": 400, "overlap": 0, "rerank_limited": False},
     "fixed_1024": {"size": 1024, "overlap": 0, "rerank_limited": True},
 }
+# Header-prefix experiment (Layer 7): "<strategy>_prefix" stores the same chunks, embedded with
+# "<part> (<document>). <section>" on a line before the text.
+HEADER_PREFIX = "_prefix"
 RERANK_MAX_TOKENS = 400  # a chunk sent to the reranker should stay at or below this, question included
 CHUNK_COUNTS = RUNS_DIR / "chunk_counts.csv"
 
@@ -92,6 +95,17 @@ GENERATE_USD_PER_1K_INPUT = 0.00006
 GENERATE_USD_PER_1K_OUTPUT = 0.00024
 # The model is told to reply with exactly this sentence when the passages do not hold the answer.
 NOT_CONTAINED = "The provided datasheets do not contain this information."
+
+# Evaluation (Layer 7). Questions are hand-checked against the PDFs; a source is (document, PDF page).
+QUESTIONS = ROOT / "data" / "questions.jsonl"
+EVAL_DIR = RUNS_DIR / "eval"  # per-question rows, one CSV per experiment
+RESULTS = RUNS_DIR / "results.csv"  # one summary row per experiment and reranker state
+RESULTS_BY_TYPE = RUNS_DIR / "results_by_type.csv"
+EVAL_KS = (1, 3, 5, 10)  # recall@k is reported for each
+EVAL_RERANK_K = 10  # the reranker keeps this many in eval, so every k above is read from one list
+# Request quotas of this account (Service Quotas, 2026-10-13), for the dry run's time estimate.
+EMBED_PER_MIN = 60
+GENERATE_PER_MIN = 100
 
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")

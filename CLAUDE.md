@@ -45,14 +45,44 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Files: `rag/rerank.py` (`rerank(conn, question, candidates, k=None, enabled=None)`, `uncached_count`, `calls_needed`, `rerank_text`, `rerank_key`), `rag/db.py` (table `rerank_cache`: `question_sha256`, `text_sha256`, `model`, `score`; `cached_rerank_scores`, `store_rerank_scores`), `scripts/show_rerank.py`. Settings: `RERANK_MODEL_ID`, `RERANK_ENABLED`, `RERANK_MAX_DOCS`, `RERANK_MIN_INTERVAL_S`, `RERANK_USD_PER_QUERY`.
   - `rerank` returns copies of the best k hits: `score` is the relevance score, `search_score` the score the hit came in with. Switched off, it returns the first k candidates in the same shape and calls nothing.
   - A score is cached per question, sent text and model id, so only texts not seen before are sent, and a change of k is free. The sent text is cut so that question plus text stay within `RERANK_MAX_TOKENS`; the hit keeps its full text. Calls are 20 seconds apart inside one process, and the estimate of one billed query per call holds for 30 candidates but may run low near 100 long documents. `calls_needed` is for the Layer 7 dry run.
-- Layer 6: DONE on 2026-10-14 (built, smoke-tested and reviewed; the human does the PR). 589 tests pass (`tests/test_generate.py` 39). The smoke run passed 6 of 6 (`runs/generation_smoke.md`): three answers cite the right page, three unanswerable questions get the fixed sentence. Cost $0.013, almost all reranking.
+- Layer 6: DONE on 2026-10-14, merged as PR #6 (`b57b216`). 589 tests pass (`tests/test_generate.py` 39). The smoke run passed 6 of 6 (`runs/generation_smoke.md`): three answers cite the right page, three unanswerable questions get the fixed sentence. Cost $0.013, almost all reranking.
   - Verified on 2026-10-14: Converse on the `bedrock-runtime` client (`modelId`, `system=[{"text"}]`, `messages`, `inferenceConfig` `maxTokens` / `temperature`; answer `output.message.content[].text`, `stopReason`, `usage.inputTokens` / `outputTokens`, `metrics.latencyMs`), IAM `bedrock:InvokeModel`. Nova Lite price $0.06 / $0.24 per 1M input / output tokens (Standard tier), read by the human on the pricing page.
   - Files: `rag/generate.py` (`passage_label`, `build_context`, `system_prompt`, `build_prompt`, `call_llm`, `resolve_citations`, `is_not_contained`, `generate`), `scripts/show_generate.py`. Settings: `GENERATE_MODEL_ID`, `GENERATE_MAX_TOKENS` (512), `GENERATE_TEMPERATURE` (0), `GENERATE_USD_PER_1K_INPUT` / `_OUTPUT`, `NOT_CONTAINED`.
   - A passage is `[n] <part> (<document>), page <page>` (plus the printed page when it differs) and the chunk's full text. `generate` returns `answer`, `sources` (`label`, `id`, `document`, `page`, `page_label`; each label once, in order of use), `invalid`, `not_contained`, `cut_off`, token counts, `stop_reason`, `latency_ms`. With no chunks it returns the sentence and calls nothing.
   - "Not contained" is one fixed sentence the model must give; `is_not_contained` is true when it is there (final full stop optional) and nothing valid is cited. A reworded refusal is missed: watch for it in Layer 7.
   - Citations read: `[n]`, `[n, m]`, `[n][m]`, `[n-m]`. A label glued to a word counts unless that word with the same brackets is in a passage (a copied footnote marker such as `GPIO16[2]`). A footnote marker standing alone in a passage (`Note: [3]`) can still be confused with a passage label; not seen yet.
   - Each call writes two cost log rows (input and output tokens). A stop reason other than `end_turn` or `max_tokens` raises after logging. No answer cache.
-- Next: Layer 7 (evaluation), parallel build, in plan mode, when the human says so. The questions are written by the human and Claude together.
+- Layer 7 split, as decided with the human on 2026-10-14: 7a is questions, metrics, `run_eval` and every retrieval comparison, plus answer checks for a shortlist; 7b is RAGAS with Nova Pro and gets its own plan.
+- Layer 7a: DONE on 2026-10-14 (parallel build). The code review is done and recorded (1 of 2). Results are in `runs/eval_review.md`.
+  - Questions: `data/questions.jsonl` has 49, checked by Claude against the rendered PDF pages, at the human's request: 22 table lookups, 10 single values, 6 rephrased, 5 comparisons, 6 with no answer. It is frozen; the draft and its checks are in `runs/questions_draft.md`.
+  - Files:
+    - `rag/eval/questions.py`: `load_questions`, which validates every line.
+    - `rag/eval/metrics.py`: `recall_at_k`, `mrr`, `index_recall`, `refusal_rates`, `citation_hit_rate`, `by_type`.
+    - `rag/eval/experiments.py`: `BASELINE` and `EXPERIMENTS`, a Python dict, not YAML.
+    - `rag/eval/run_eval.py`.
+    - `rag/db.py`: the HNSW functions. The index is built inside a rolled-back transaction, so the database is never changed.
+    - `rag/load.py`: the header prefix. The strategy `<name>_prefix` embeds "part (document). section" on a line before the text.
+    - Settings in `rag/config.py`: `QUESTIONS`, `EVAL_DIR`, `RESULTS`, `RESULTS_BY_TYPE`, `EVAL_KS`, `EVAL_RERANK_K`, `EMBED_PER_MIN`, `GENERATE_PER_MIN`, `HEADER_PREFIX`.
+  - One run gives two summary rows, the search order and the reranked order. The reranker keeps 10 in eval, so R@1/3/5/10 and MRR@10 come from one list.
+  - Outputs:
+    - `runs/results.csv`: one row per experiment and reranker state;
+    - `runs/results_by_type.csv`;
+    - `runs/eval/<experiment>.csv`, one row per question.
+  - Results:
+    - Hybrid is the best search order.
+    - The reranker lifts every setup to about R@5 0.977.
+    - `page` chunking is clearly worst.
+    - `english` keywords beat `simple`.
+    - HNSW index recall is 0.995, so exact search stays.
+    - The header prefix (`fixed_400_prefix`, loaded) gives the best search order: MRR 0.834 against 0.766.
+    - Answers: prefix with k 10 cites the right page for 40 of 43 questions. False refusals by Nova Lite are the main failure.
+  - Shortlist for 7b: prefix k 10, prefix k 5, `detect_part` k 5, and the baseline.
+  - Layer 6 changed in 7a:
+    - `is_not_contained` also accepts the refusal sentence followed only by labels.
+    - The prompt has a rule to read every passage and to refuse without citations. It made no measurable difference.
+    - A reworded refusal ("Sorry, I cannot provide ...") is still missed.
+  - Spend: $1.31 in total, $1.20 of it on reranking.
+- Next: Layer 7b (RAGAS), in plan mode, when the human says so. Check the Nova Pro price and RAGAS support for Python 3.14 first.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -438,8 +468,8 @@ pytest -q tests/test_search.py
 pytest -q tests/test_generate.py
 pytest -q tests/test_metrics.py
 pytest -q                                   # everything
-python -m rag.eval.run_eval --config configs/baseline.yaml --dry-run   # prints call count and estimated cost
-python -m rag.eval.run_eval --config configs/baseline.yaml             # real run
+python -m rag.eval.run_eval baseline --dry-run      # names, or --group <g>, or --all; prints calls, cost, minutes
+python -m rag.eval.run_eval baseline               # real run, asks first; --yes does not ask
 python -m rag.pipeline "What is the maximum supply voltage?"
 ```
 

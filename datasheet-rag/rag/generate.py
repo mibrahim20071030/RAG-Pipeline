@@ -23,7 +23,9 @@ Rules:
 2. After each claim, cite the passage it comes from as [n], with a space before it. Cite several passages as [1] [3].
 3. Give values with their units and conditions exactly as the passage writes them.
 4. If passages disagree, say so and cite each of them.
-5. If the passages do not contain the answer, reply with exactly this sentence and nothing else:
+5. Read every passage, tables included, before deciding. If a passage gives the value or fact asked for, even in
+a table row or in other words than the question, answer from it.
+6. Only if no passage answers the question, reply with exactly this sentence, with no citation and nothing else:
 """
 
 # [3], [1, 3] or [1-3]. A label glued to a word may be a footnote marker copied from a passage (GPIO16[2]).
@@ -152,11 +154,15 @@ def _words(text: str) -> str:
 
 
 def is_not_contained(answer: str, sources: list[dict] | None = None) -> bool:
-    """True when the answer gives the fixed 'not contained' sentence and cites nothing. Case, spacing and the
-    final full stop do not matter. An answer that cites a passage is an answer, even if it also has the sentence."""
+    """True when the answer gives the fixed 'not contained' sentence and cites nothing, or is that sentence with
+    only labels after it ("... information. [1] [2]", seen from Nova Lite in Layer 7). Case, spacing and the final
+    full stop do not matter. An answer that also says something else and cites a passage is an answer."""
+    sentence = _words(config.NOT_CONTAINED).rstrip(".")
+    if _words(_LABELS.sub(" ", answer)).rstrip(" .") == sentence:
+        return True
     if sources:
         return False
-    return _words(config.NOT_CONTAINED).rstrip(".") in _words(answer)
+    return sentence in _words(answer)
 
 
 def generate(question: str, chunks: list[dict], client=None) -> dict:
@@ -168,10 +174,13 @@ def generate(question: str, chunks: list[dict], client=None) -> dict:
         system, messages = build_prompt(question, chunks)
         reply = call_llm(system, messages, client=client)
     citations = resolve_citations(reply["text"], chunks)
+    not_contained = is_not_contained(reply["text"], citations["sources"])
+    if not_contained:
+        citations["sources"] = []  # labels after the refusal sentence cite nothing; no page is shown for them
     return {
         "answer": reply["text"],
         **citations,
-        "not_contained": is_not_contained(reply["text"], citations["sources"]),
+        "not_contained": not_contained,
         "cut_off": reply["stop_reason"] == "max_tokens",
         "input_tokens": reply["input_tokens"],
         "output_tokens": reply["output_tokens"],
