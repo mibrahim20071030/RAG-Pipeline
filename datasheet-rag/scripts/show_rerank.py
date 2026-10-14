@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, db, rerank, search
+from rag import config, db, load, rerank, search
 from scripts.show_search import QUESTIONS
 
 # Two rows of Table 12 (current characteristics) of the STM32F205 datasheet, page 70, as the chunker writes them.
@@ -51,7 +51,7 @@ def main(argv: list[str]) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Run the two-chunk rerank test and show five questions reranked.")
     parser.add_argument("--yes", action="store_true", help="do not ask before the paid calls")
-    parser.add_argument("--strategy", choices=list(config.CHUNK_STRATEGIES), default=config.DEFAULT_STRATEGY)
+    parser.add_argument("--strategy", choices=load.strategy_names(), default=config.DEFAULT_STRATEGY)
     args = parser.parse_args(argv)
 
     try:

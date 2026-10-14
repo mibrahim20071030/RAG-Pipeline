@@ -102,7 +102,8 @@ def test_output_has_exactly_k_items_sorted_by_score(conn, env):
 
 
 def test_k_defaults_to_top_k(conn, env):
-    assert len(env(conn, QUESTION, hits([f"text {n}" for n in range(9)]))) == config.TOP_K
+    # More candidates than TOP_K, whatever TOP_K is set to.
+    assert len(env(conn, QUESTION, hits([f"text {n}" for n in range(config.TOP_K + 4)]))) == config.TOP_K
 
 
 def test_k_larger_than_the_list_returns_every_hit(conn, env):

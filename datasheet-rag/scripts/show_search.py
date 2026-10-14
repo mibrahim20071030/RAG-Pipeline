@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, db, search
+from rag import config, db, load, search
 from rag.chunk_base import approx_tokens
 
 QUESTIONS = [
@@ -44,7 +44,7 @@ def main(argv: list[str]) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Print the top results of each search mode for five questions.")
     parser.add_argument("--yes", action="store_true", help="do not ask before the paid calls")
-    parser.add_argument("--strategy", choices=list(config.CHUNK_STRATEGIES), default=config.DEFAULT_STRATEGY)
+    parser.add_argument("--strategy", choices=load.strategy_names(), default=config.DEFAULT_STRATEGY)
     args = parser.parse_args(argv)
     n = config.N_CANDIDATES
 

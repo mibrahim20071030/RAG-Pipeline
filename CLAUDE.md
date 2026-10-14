@@ -101,7 +101,15 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - It was wrong on 2 of 21 refusals (q33: the verdict disagrees with its own reason).
     - It cannot see mis-citations, so the 7a citation check stays.
   - Spend: $0.87 for the whole of 7b.
-- Next: Layer 8 (wrap-up), in plan mode, when the human says so.
+- Layer 8: BUILT on 2026-10-14 (single agent), waiting for the human's PR. 799 tests pass; the code review is done and recorded (1 of 2). The decision, numbers, failures, known limits and spend are in `runs/cycle1_summary.md`.
+  - Frozen in `rag/config.py`: `DEFAULT_STRATEGY = "fixed_400_prefix"`, `SEARCH_MODE = "hybrid"` (new), `KEYWORD_CONFIG` `english`, `N_CANDIDATES` 30, `RERANK_ENABLED` True, `TOP_K` 10, `DETECT_PART` False. `tests/test_pipeline.py` asserts these, so a change must be deliberate. `rag/eval/experiments.py` `BASELINE` stays the 7a baseline.
+  - Question set frozen by `QUESTIONS_SHA256`, taken over the text with "\n" line endings (Git on Windows checks out "\r\n"); checked in `tests/test_questions.py`. Editing `data/questions.jsonl` breaks that test on purpose.
+  - The `show_*` scripts take `--strategy` from `load.strategy_names()` (every strategy and its `_prefix` form). `python -m rag.load` with no `--strategy` now loads the seven strategies plus `DEFAULT_STRATEGY`, so a fresh load (Aurora in Cycle 2) includes the one the pipeline searches.
+  - An empty search makes `format_answer` print a warning, so it is not mistaken for a real "not contained" answer.
+  - `rag/pipeline.py`: `answer_question(conn, question, document=None, embed_fn=None, rerank_client=None, generate_client=None)` returns the `generate` result plus `question`, `passages`, `timings_ms` (`search` includes the question embed, `rerank`, `generate`). `format_answer(result)`. The CLI (`--document` optional) does not ask before paid calls (human's choice); it prints the spend afterwards. A new question costs about $0.0023, a cached one about $0.0003.
+  - Checked on 2026-10-14: q01, q18, q29 cite the right page, q47 refused, a new TCTH question answered from page 2. Cycle 1 spend in total: $2.23.
+  - The reworded-refusal miss stays a known limit (human's choice).
+- Next: the human's PR for Layer 8, then Cycle 2 step 1, in plan mode, when the human says so.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -186,7 +194,7 @@ Rules for the agents (also written into each definition):
 | Datasheet filter | No automatic detection in the baseline. Cycle 2 UI has a datasheet dropdown (default: all). `detect_part` is an experiment. | A wrong filter hides the right answer. |
 | Vector index | None in Cycle 1 (exact search). HNSW is an experiment that measures index recall. Cycle 2 uses exact search. | A few thousand chunks do not need an index. |
 | recall@k definition | Hit rate: for each question, 1 if at least one correct chunk is in the top k, else 0, averaged over questions. A question may list several acceptable (doc, page) pairs. | Defined once, used everywhere. MRR is reported alongside. |
-| Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 5. Both are tunable (k in 3, 5, 10). | |
+| Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 10 (frozen at Layer 8; k 5 was the start value). | k 10 cut false refusals from 6 to 2 (Layer 7). |
 | Frontend | One plain HTML page with `fetch`, hosted as a static website in S3 | No framework needed. |
 | Public demo | Throttled API Gateway plus Lambda concurrency cap. Torn down after publishing. A recorded demo and the repo stay as the portfolio artifact. | A public URL is the main spending risk. |
 

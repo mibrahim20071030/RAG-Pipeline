@@ -124,10 +124,12 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--yes", action="store_true", help="with --run: do not ask before the paid calls")
     parser.add_argument("--doc",choices=parsed_documents(), help="one parsed datasheet (default: all)")
     parser.add_argument("--strategy", choices=strategy_names(),
-                        help="one strategy (default: all without the header prefix)")
+                        help="one strategy (default: all without the header prefix, plus the frozen "
+                             "DEFAULT_STRATEGY the pipeline searches)")
     args = parser.parse_args(argv)
     documents = [args.doc] if args.doc else parsed_documents()
-    strategies = [args.strategy] if args.strategy else list(config.CHUNK_STRATEGIES)
+    strategies = [args.strategy] if args.strategy else list(dict.fromkeys([*config.CHUNK_STRATEGIES,
+                                                                           config.DEFAULT_STRATEGY]))
     if not documents:
         sys.exit(f"No parsed datasheets in {config.PARSED_DIR}. Run: python -m rag.parse")
 

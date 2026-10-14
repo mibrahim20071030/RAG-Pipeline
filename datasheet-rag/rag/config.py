@@ -62,14 +62,16 @@ HEADER_PREFIX = "_prefix"
 RERANK_MAX_TOKENS = 400  # a chunk sent to the reranker should stay at or below this, question included
 CHUNK_COUNTS = RUNS_DIR / "chunk_counts.csv"
 
-# Retrieval
-N_CANDIDATES = 30
-TOP_K = 5
-DEFAULT_STRATEGY = "fixed_400"  # the chunking strategy searched when none is named; Layer 8 picks the final one
+# Retrieval. The values marked "frozen" are the setup chosen at Layer 8 on 2026-10-14 from the Layer 7 results
+# (runs/cycle1_summary.md): header-prefix chunks, hybrid search, reranker on, 10 passages to the answer model.
+N_CANDIDATES = 30  # frozen: candidates from search, all sent to the reranker
+TOP_K = 10  # frozen: passages kept by the reranker and given to the answer model
+DEFAULT_STRATEGY = "fixed_400_prefix"  # frozen: the chunking strategy searched when none is named
+SEARCH_MODE = "hybrid"  # frozen: the search mode of rag.pipeline
 KEYWORD_CONFIGS = ("english", "simple")  # the two keyword columns: tsv_english (stemmed) and tsv_simple (as written)
-KEYWORD_CONFIG = "english"
+KEYWORD_CONFIG = "english"  # frozen
 RRF_C = 60
-# Experiment, off in the baseline: limit a search to the datasheet the question names.
+# Experiment, off (frozen): limit a search to the datasheet the question names. Not tested with the header prefix.
 DETECT_PART = False
 # document name -> lower-case prefixes; a question word that starts with one names that datasheet.
 PART_ALIASES = {
@@ -81,7 +83,7 @@ PART_ALIASES = {
 
 # Reranking. API, model ARN and price checked against the Bedrock docs and pricing page on 2026-10-13.
 RERANK_MODEL_ID = "cohere.rerank-v3-5:0"
-RERANK_ENABLED = True
+RERANK_ENABLED = True  # frozen
 RERANK_MAX_DOCS = 100  # documents per call: one billed query covers up to 100
 RERANK_MIN_INTERVAL_S = 20  # seconds between calls: the account's quota is 3 requests a minute
 RERANK_USD_PER_QUERY = 0.002  # $2.00 per 1,000 queries
@@ -98,6 +100,8 @@ NOT_CONTAINED = "The provided datasheets do not contain this information."
 
 # Evaluation (Layer 7). Questions are hand-checked against the PDFs; a source is (document, PDF page).
 QUESTIONS = ROOT / "data" / "questions.jsonl"
+# Frozen at Layer 8: SHA-256 of the question file with line endings as "\n" (Git on Windows checks it out with "\r\n").
+QUESTIONS_SHA256 = "61e509596b8cba8451d1e6837d49917d137c2687ecfe8c64486e7641518aa702"
 EVAL_DIR = RUNS_DIR / "eval"  # per-question rows, one CSV per experiment
 RESULTS = RUNS_DIR / "results.csv"  # one summary row per experiment and reranker state
 RESULTS_BY_TYPE = RUNS_DIR / "results_by_type.csv"

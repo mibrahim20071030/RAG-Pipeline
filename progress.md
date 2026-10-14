@@ -6,6 +6,8 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Next session:
 
+- [ ] Layer 8: create the branch, commit, open the PR and merge (files listed in the Session 10 entry and in the hand-over message).
+
 - [x] 2026-10-14: Python 3.13 installed next to 3.14.
 - [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
 - [x] 2026-10-14: Layer 7b smoke run and full judge run approved ($0.87 in total).
@@ -65,7 +67,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
 - [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`). PR #6 merged the same day.
 - [x] Layer 7: evaluation. 7a merged as PR #7, 7b (RAGAS) as PR #8 on 2026-10-14. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
-- [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
+- [x] Layer 8: wrap-up. Built on 2026-10-14: `fixed_400_prefix`, hybrid, reranker, k 10 frozen in `rag/config.py`; `runs/cycle1_summary.md` written; `python -m rag.pipeline` answered three real questions with the right pages, refused a no-answer one, and answered a new one. Waiting for the PR.
 
 Cycle 2 (deploy, UI, report):
 
@@ -78,6 +80,36 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-14 — Session 10: Layer 8 (Cycle 1 wrap-up)
+
+Status at the end: Layer 8 built and checked on real questions; code review running. Ready for the human's branch, commit and PR.
+
+Done:
+- Plan approved (single agent). Decisions (human): `python -m rag.pipeline` does not ask before paid calls and prints what it spent afterwards; the reworded-refusal miss stays a known limit (`is_not_contained` unchanged).
+- Chosen and frozen in `rag/config.py`: `fixed_400_prefix`, hybrid, `english`, N 30, reranker on, `TOP_K` 10, `DETECT_PART` off, new `SEARCH_MODE = "hybrid"`. Reason: best on every check in Layer 7 (40/43 correct page cited, 2 false refusals, faithfulness 0.972, relevancy 0.859, R@10 1.000). `rag/eval/experiments.py` `BASELINE` unchanged, so past runs are reproducible.
+- Question set frozen: `config.QUESTIONS_SHA256` and a test in `tests/test_questions.py`. The hash is over the text with "\n" line endings, because Git on Windows checks the file out with "\r\n" and CI on Linux with "\n".
+- `show_search`, `show_rerank`, `show_generate` accept the prefix strategy in `--strategy`, as their default is now the prefix strategy (first through `config.SEARCHABLE_STRATEGIES`, replaced after the review by `load.strategy_names()`).
+- `rag/pipeline.py`: `answer_question(conn, question, document=None, ...)` calls search, rerank, generate in order and adds `passages` and `timings_ms`; `format_answer`; CLI with `--document`. `tests/test_pipeline.py` (10 tests, fakes only).
+- Problem: `tests/test_rerank.py::test_k_defaults_to_top_k` failed after `TOP_K` became 10, because it sent only 9 candidates. Fixed in the test (it now sends `TOP_K + 4`). Full checks pass: 797 tests.
+- Pipeline check, paid, $0.0033 in all: q01 LM35 35 V p4, q18 ESP32 520 KB p26, q29 STM32 120 mA p70, q47 refused with no sources, and a new question (TCTH022BE operating temperature, −40 to 125 °C, p2, checked in the parsed page). `show_db.py` still OK.
+- `runs/cycle1_summary.md` written: setup, decision with numbers, pipeline check, failures by type, known limits, spend ($2.23 for Cycle 1), open items for Cycle 2.
+- `CLAUDE.md` updated: Layer 8 status, and the "Candidates and k" decision row now says k 10.
+- Code review (1 of 2, recorded), 9 findings:
+  - Fixed:
+    - `python -m rag.load` with no `--strategy` left out the frozen `fixed_400_prefix`, so a fresh load (for example into Aurora) would make the pipeline find nothing. The default now adds `DEFAULT_STRATEGY`; the dry run shows 0 paid calls locally, because everything is cached.
+    - An empty search printed the same "not contained" answer as a real refusal. `format_answer` now warns that no chunks were found (no searchable word, or the strategy is not loaded).
+    - A reranker `RuntimeError` was reported as an answer-model failure; the message now names neither.
+    - An unreadable cost log (open in Excel) stopped the pipeline before it answered; now it answers and says the log could not be read.
+    - `show_generate` estimated 3,000 input tokens per answer; at k 10 it is 4,500 (Layer 7 measured about 4,300).
+    - `config.SEARCHABLE_STRATEGIES` was removed; the scripts use `load.strategy_names()`, the one list of loadable strategies.
+  - Not fixed, reported:
+    - "Spent" counts cost log rows another process writes meanwhile (noted in `_spent_since`).
+    - An empty question would call Titan: not so, `search.search` returns no hits for a question with no words and calls nothing; the new warning covers it.
+    - `test_frozen_setup` repeats the values: on purpose, so a change of the frozen setup is deliberate.
+  - `tests/test_pipeline.py`: 12 tests. Full checks pass (799 tests).
+
+Still open: Cycle 2 starts only when the human says so, in plan mode. First decisions there: reranker quota (3 a minute) for the demo, cache writes, Lambda Python version.
 
 ## 2026-10-14 — Session 9: Layer 7b (RAGAS) built and run
 

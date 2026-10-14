@@ -3,6 +3,7 @@
 Every file here is a small hand-made one in a temporary folder. Only the page-count checks read a parsed datasheet,
 and the one that needs it skips itself when `runs/parsed/lm35.json` is missing (as on GitHub).
 """
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -170,3 +171,11 @@ def test_the_error_names_the_first_bad_line(tmp_path):
     with pytest.raises(ValueError) as error:
         questions.load_questions(path)
     assert re.search(r"\b2\b", str(error.value))
+
+# ---------------------------------------------------------------- the frozen question set (Layer 8)
+
+def test_question_file_is_frozen():
+    # Line endings are compared as "\n": Git on Windows checks the file out with "\r\n".
+    text = config.QUESTIONS.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(text).hexdigest() == config.QUESTIONS_SHA256, (
+        "data/questions.jsonl changed. The question set was frozen at Layer 8; results are only comparable on it.")
