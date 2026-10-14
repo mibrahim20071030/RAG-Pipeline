@@ -1,6 +1,7 @@
 """Layer 8b tests for rag.server: the real HTTP server on a free port, with the database and the API faked."""
 import http.client
 import json
+import os
 import threading
 
 import psycopg
@@ -167,6 +168,13 @@ def test_pdf_allow_list_is_read_once(running):
         response, _ = request(port, "GET", "/pdfs/lm35.pdf")
         assert response.status == 200
     assert calls["documents"] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the port sharing it guards against happens on Windows only")
+def test_second_server_cannot_take_the_same_port(running):
+    port, _, _ = running
+    with pytest.raises(OSError):
+        server.make_server(port=port)
 
 
 def test_connection_is_reused(running):

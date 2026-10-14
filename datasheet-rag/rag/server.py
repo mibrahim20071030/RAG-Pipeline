@@ -9,6 +9,7 @@ Postgres restarts.
 """
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -193,10 +194,16 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write(f"  {args[1]}  {self.command} {self.path}\n")
 
 
+class _Server(HTTPServer):
+    # HTTPServer sets SO_REUSEADDR. On Windows that lets a second server bind a port that is already in use, and
+    # requests then reach either one. Off there, a second start fails with "Cannot listen on port".
+    allow_reuse_address = os.name != "nt"
+
+
 def make_server(host: str | None = None, port: int | None = None, connect=None, ask=None, documents=None,
                 web_dir=None, pdf_dir=None) -> HTTPServer:
     """The HTTP server, not yet serving. Everything left as None comes from config and the real modules."""
-    server = HTTPServer((host or config.SERVER_HOST, config.SERVER_PORT if port is None else port), Handler)
+    server = _Server((host or config.SERVER_HOST, config.SERVER_PORT if port is None else port), Handler)
     server.state = _State(connect or db.connect, ask or api.ask, documents or api.documents,
                           web_dir or config.WEB_DIR, pdf_dir or config.PDF_DIR)
     return server

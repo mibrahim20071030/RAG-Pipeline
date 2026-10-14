@@ -110,7 +110,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Checked on 2026-10-14: q01, q18, q29 cite the right page, q47 refused, a new TCTH question answered from page 2. Cycle 1 spend in total: $2.23.
   - The reworded-refusal miss stays a known limit (human's choice).
 - Layer 8 merged as PR #9 (`ead7ff3`).
-- Layer 8b: BUILT on 2026-10-14 (single agent). It needs its own PR, since Layer 8 is already merged. It adds a local web UI and a README written for recruiters.
+- Layer 8b: DONE on 2026-10-14 (single agent), merged as PR #10 (`0988c26`). The Windows port fix that came after it was pushed straight to `main`. It adds a local web UI and a README written for recruiters.
   - `rag/api.py`: `ask(conn, payload, answer_fn=None) -> (status, body)` and `documents(conn)`, with no HTTP, so a Cycle 2 handler can call them unchanged.
     - Errors: 400 for an empty question, more than `API_MAX_QUESTION_CHARS` (500) characters, or an unknown document; 429 when AWS throttles; 502 for other AWS failures or a step's `RuntimeError`; 503 when the database is down.
     - Sources carry `pdf_url` = `/pdfs/<file>#page=<page>`.
@@ -128,12 +128,14 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `generate.citation_spans(answer, chunks)` gives the citing brackets by the rules of `resolve_citations`. The API returns them as `answer_parts`, and the page links only those.
   - A `?q=` link only fills in the form and never asks, because asking costs money.
   - The server returns a JSON 500 for any unexpected error, has a 15 s socket timeout, and reads the PDF allow-list once.
-  - Code review: 1 of 2 for Layer 8b, done and recorded. 857 tests pass.
+  - Code review: 1 of 2 for Layer 8b, done and recorded. 858 tests pass.
+  - The server turns off `SO_REUSEADDR` on Windows (`allow_reuse_address`). Otherwise a second `python -m rag.server` silently shares port 8000 with the first.
   - Settings: `WEB_DIR`, `SERVER_HOST`, `SERVER_PORT`, `API_MAX_QUESTION_CHARS`, `API_MAX_BODY_BYTES`.
   - Install file: `datasheet-rag/requirements.txt` (pinned). The README screenshot is `docs/ui.png`, taken with headless Edge (`--force-dark-mode`; headless Edge cannot go narrower than about 492 px).
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
-- Next: the human's PR for Layer 8b, then Cycle 2 step 1, in plan mode, when the human says so.
+- Cycle 1 is complete.
+- Next: Cycle 2 step 1 (Aurora smoke test), in plan mode, when the human says so.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 

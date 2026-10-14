@@ -8,7 +8,8 @@ Next session:
 
 - [ ] Try the web UI: `cd datasheet-rag`, `.venv\Scripts\Activate.ps1`, `python -m rag.server`, open http://127.0.0.1:8000 (Docker and `rag-pg` running). Each new question costs about $0.0023.
 - [x] 2026-10-14: PR #9 (Layer 8) merged into `main` (`ead7ff3`).
-- [ ] Layer 8b: create the branch, commit, open the PR and merge (files listed in the hand-over message). After the merge, check that the README and the screenshot look right on GitHub.
+- [x] 2026-10-14: PR #10 (Layer 8b, web UI and README) merged into `main` (`0988c26`).
+- [ ] Delete the branch `layer-8b-UI` on GitHub (it was still there after the merge), and check that the README and the screenshot look right there.
 
 - [x] 2026-10-14: Python 3.13 installed next to 3.14.
 - [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
@@ -85,7 +86,7 @@ Cycle 2 (deploy, UI, report):
 
 ## 2026-10-14 — Session 10b: Layer 8b (local web UI, README)
 
-Status at the end: built, checked and reviewed (review 1 of 2, recorded). It needs its own PR, since Layer 8 was merged as PR #9.
+Status at the end: merged as PR #10 (`0988c26`). The port fix found after the merge was pushed straight to `main` with the human's yes.
 
 Done:
 - Asked by the human: everything should run locally with a UI like Cycle 2's, and the repo should have a README for recruiters (modelled on the Project 1 README, with no Cycle 2 talk). The plan was approved after the human installed UI skills (`ui-ux-pro-max`, then `web-design-guidelines` and `writing-guidelines`).
@@ -146,8 +147,12 @@ Done:
   - a typed question sent with Enter: STM32F205 maximum junction temperature, 125 °C, p. 70;
   - no console errors.
   - A demo GIF, `datasheet_qa_demo.gif`, was downloaded to the browser's download folder; it is not in the repo.
+- The human chose to keep the screenshot in the README rather than a GIF. A re-recording without the watermark was aborted.
+- Problem found: two servers ran on port 8000 at once (the human's and Claude's).
+  - Why: Python's `HTTPServer` sets `SO_REUSEADDR`, and on Windows that lets a second program bind a port already in use; requests then reach either server.
+  - Fix: `allow_reuse_address` is off on Windows (`server._Server`), so a second start fails with "Cannot listen on port 8000". Checked against the human's running server, plus a test. 858 tests pass.
 
-Still open: the human tries the page and opens the PR for Layer 8b.
+Still open: delete the `layer-8b-UI` branch on GitHub. Cycle 1 is complete; Cycle 2 starts in plan mode when the human says so.
 
 ## 2026-10-14 — Session 10: Layer 8 (Cycle 1 wrap-up)
 
