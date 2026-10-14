@@ -53,7 +53,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Citations read: `[n]`, `[n, m]`, `[n][m]`, `[n-m]`. A label glued to a word counts unless that word with the same brackets is in a passage (a copied footnote marker such as `GPIO16[2]`). A footnote marker standing alone in a passage (`Note: [3]`) can still be confused with a passage label; not seen yet.
   - Each call writes two cost log rows (input and output tokens). A stop reason other than `end_turn` or `max_tokens` raises after logging. No answer cache.
 - Layer 7 split, as decided with the human on 2026-10-14: 7a is questions, metrics, `run_eval` and every retrieval comparison, plus answer checks for a shortlist; 7b is RAGAS with Nova Pro and gets its own plan.
-- Layer 7a: DONE on 2026-10-14 (parallel build). The code review is done and recorded (1 of 2). Results are in `runs/eval_review.md`.
+- Layer 7a: DONE on 2026-10-14 (parallel build), merged as PR #7 (`c3f8bb7`). The code review is done and recorded (1 of 2). Results are in `runs/eval_review.md`.
   - Questions: `data/questions.jsonl` has 49, checked by Claude against the rendered PDF pages, at the human's request: 22 table lookups, 10 single values, 6 rephrased, 5 comparisons, 6 with no answer. It is frozen; the draft and its checks are in `runs/questions_draft.md`.
   - Files:
     - `rag/eval/questions.py`: `load_questions`, which validates every line.

@@ -141,7 +141,9 @@ Reported, not fixed:
 
 Checks pass: 759 tests.
 
-Still open: the file list for the PR (handed over), then Layer 7b.
+The human merged the work as PR #7 (`c3f8bb7`). The `runs/` folder stays gitignored, so the eval outputs (`results.csv`, `eval_review.md`) are local only.
+
+Still open: Layer 7b (RAGAS with Nova Pro), in plan mode when the human says so.
 
 ## 2026-10-14 — Session 7: Layer 6 (generation and citations)
 

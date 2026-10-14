@@ -15,8 +15,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Generated outputs (eval results, parsed PDFs, cost log)
-runs/
+# Generated outputs (eval results, parsed PDFs, cost log). The written reviews and the results tables are kept;
+# parsed datasheet text, per-question files, logs and the cost log stay local.
+**/runs/*
+!**/runs/*.md
+!**/runs/results*.csv
 
 # Datasheets stay local (vendor copyright)
 datasheet-rag/data/pdfs/
