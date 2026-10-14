@@ -220,6 +220,16 @@ def list_documents(conn: psycopg.Connection) -> list[dict]:
     return [dict(zip(("id", "name", "file", "part", "revision"), row, strict=True)) for row in rows]
 
 
+def mean_chunk_tokens(conn: psycopg.Connection, strategy: str, chars_per_token: int) -> float:
+    """Mean approximate tokens of the strategy's stored chunk texts, each rounded up as `approx_tokens` does;
+    0 when none is stored."""
+    row = conn.execute(
+        "SELECT coalesce(avg(ceil(length(text)::numeric / %s)), 0) FROM chunks WHERE strategy = %s",
+        (chars_per_token, strategy),
+    ).fetchone()
+    return float(row[0])
+
+
 def sample_chunks(conn: psycopg.Connection, strategy: str, document: str, limit: int = 3) -> list[dict]:
     """The first stored chunks of one document and strategy, with both keyword columns as text."""
     columns = ("chunk_index", "page", "page_label", "section", "kind", "text", "tsv_english", "tsv_simple")
@@ -295,6 +305,52 @@ def explain_nearest(conn: psycopg.Connection, vector, strategy: str, n: int) -> 
     """The plan Postgres picks for the `nearest_chunks` query over all documents."""
     rows = conn.execute("EXPLAIN " + _NEAREST_SQL, _nearest_params(vector, strategy, n, None)).fetchall()
     return "\n".join(row[0] for row in rows)
+
+
+def _with_hnsw(conn: psycopg.Connection, query: str, params: dict) -> list[tuple]:
+    """Run a query with a throwaway HNSW index on `chunks`: the transaction rolls back, so the index never stays.
+
+    Sequential scans and sorts are switched off so that the planner uses the index: otherwise it reads the
+    strategy's rows through `chunks_strategy_idx` and sorts them, which is exact search. The iterative scan
+    carries on past `ef_search` until enough rows pass the strategy and document filter.
+    """
+    with conn.transaction(force_rollback=True):
+        conn.execute("CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops)")
+        conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+        conn.execute("SET LOCAL enable_seqscan = off")
+        conn.execute("SET LOCAL enable_sort = off")
+        return conn.execute(query, params).fetchall()
+
+
+def hnsw_nearest(conn: psycopg.Connection, vector, strategy: str, n: int,
+                 document: str | None = None) -> list[dict]:
+    """`nearest_chunks` answered by an approximate HNSW index instead of exact search (the index experiment)."""
+    rows = _with_hnsw(conn, _NEAREST_SQL, _nearest_params(vector, strategy, n, document))
+    # The relaxed order can return rows slightly out of order; sorted as in `nearest_chunks`.
+    return sorted(_hits(rows), key=lambda hit: (-hit["score"], hit["id"]))
+
+
+def explain_hnsw(conn: psycopg.Connection, vector, strategy: str, n: int) -> str:
+    """The plan Postgres picks for the `hnsw_nearest` query over all documents."""
+    rows = _with_hnsw(conn, "EXPLAIN " + _NEAREST_SQL, _nearest_params(vector, strategy, n, None))
+    return "\n".join(row[0] for row in rows)
+
+
+def hnsw_index_count(conn: psycopg.Connection) -> int:
+    """Number of HNSW indexes on `chunks` in the current schema. Should be 0 outside `hnsw_nearest`."""
+    # Read from the catalogs, not pg_indexes: that view rebuilds the definition text of indexes in every schema,
+    # which fails when another session drops its test schema at the same moment.
+    row = conn.execute(
+        """
+        SELECT count(*)
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_class x ON x.oid = i.indexrelid
+        JOIN pg_am a ON a.oid = x.relam
+        WHERE t.relnamespace = current_schema()::regnamespace AND t.relname = 'chunks' AND a.amname = 'hnsw'
+        """
+    ).fetchone()
+    return row[0]
 
 
 def keyword_chunks(conn: psycopg.Connection, terms: list[str], strategy: str, n: int, ts_config: str = "english",

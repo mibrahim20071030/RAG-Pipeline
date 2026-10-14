@@ -159,6 +159,18 @@ def test_cited_answer_with_the_sentence_is_an_answer():
     assert not generate.is_not_contained(answer, sources)
 
 
+def test_sentence_followed_only_by_labels_is_a_refusal():
+    answer = f"{config.NOT_CONTAINED} [1] [2] [3]"
+    sources = generate.resolve_citations(answer, chunks(3))["sources"]
+    assert sources
+    assert generate.is_not_contained(answer, sources)
+    assert generate.is_not_contained(f"{config.NOT_CONTAINED.rstrip('.')} [1, 2].", sources)
+
+
+def test_prompt_asks_for_the_sentence_without_citations():
+    assert "no citation" in generate.system_prompt()
+
+
 def test_prompt_follows_a_changed_sentence(monkeypatch):
     monkeypatch.setattr(config, "NOT_CONTAINED", "Not in the datasheets.")
     assert generate.system_prompt().endswith("Not in the datasheets.")
@@ -234,6 +246,11 @@ def test_generate_returns_answer_sources_and_flags():
 
 def test_generate_flags_not_contained():
     result = generate.generate(QUESTION, chunks(3), client=FakeLLM(config.NOT_CONTAINED))
+    assert result["not_contained"] is True and result["sources"] == []
+
+
+def test_generate_refusal_followed_by_labels_lists_no_source():
+    result = generate.generate(QUESTION, chunks(3), client=FakeLLM(f"{config.NOT_CONTAINED} [1] [2]"))
     assert result["not_contained"] is True and result["sources"] == []
 
 
