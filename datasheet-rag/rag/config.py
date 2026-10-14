@@ -107,6 +107,19 @@ EVAL_RERANK_K = 10  # the reranker keeps this many in eval, so every k above is 
 EMBED_PER_MIN = 60
 GENERATE_PER_MIN = 100
 
+# RAGAS judge (Layer 7b), run in .venv-ragas (Python 3.13). Price verified by the human on the Bedrock pricing page
+# on 2026-10-14: $0.80 / $3.20 per 1M input / output tokens (on-demand).
+JUDGE_MODEL_ID = "amazon.nova-pro-v1:0"
+JUDGE_USD_PER_1K_INPUT = 0.0008
+JUDGE_USD_PER_1K_OUTPUT = 0.0032
+JUDGE_PER_MIN = 13  # the account's Nova Pro quota (Service Quotas, 2026-10-13)
+JUDGE_MIN_INTERVAL_S = 60 / (JUDGE_PER_MIN - 1)  # seconds between judge calls: one a minute under the quota
+JUDGE_TEMPERATURE = 0.0
+JUDGE_MAX_TOKENS = 2048  # longest judge reply, in tokens: a statement list or verdict list can be long
+RAGAS_DIR = RUNS_DIR / "ragas"  # per-answer judge scores, one CSV per experiment
+RAGAS_RESULTS = RUNS_DIR / "results_ragas.csv"  # one summary row per experiment
+RAGAS_SHORTLIST = ("gen_prefix_k10", "gen_prefix_k5", "gen_detect_part", "gen_baseline")
+
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")
 PG_PORT = int(os.environ.get("PGPORT", "5432"))
