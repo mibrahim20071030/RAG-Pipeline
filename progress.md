@@ -9,7 +9,7 @@ Next session:
 - [x] 2026-10-14: Python 3.13 installed next to 3.14.
 - [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
 - [x] 2026-10-14: Layer 7b smoke run and full judge run approved ($0.87 in total).
-- [ ] Layer 7b: make the branch, commit, PR and merge (Claude lists the changed files).
+- [x] 2026-10-14: PR #8 (Layer 7b, RAGAS judge) merged into `main` (`14dd8f1`).
 
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
@@ -23,7 +23,7 @@ Needed later:
 
 - [ ] Layer 3: start Docker Desktop and run `docker start rag-pg` (the container does not restart on its own).
 - [x] Layer 7a: approve each paid evaluation run after its dry run (done 2026-10-14; $1.31 in total).
-- [ ] Layer 7b (RAGAS with Nova Pro): its own plan later; check the Nova Pro price and RAGAS support for Python 3.14 first.
+- [x] Layer 7b (RAGAS with Nova Pro): done 2026-10-14, $0.87.
 
 Done:
 
@@ -64,7 +64,7 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 4: retrieval. Built and reviewed on 2026-10-13; `tests/test_search.py` passes (168 tests), `EXPLAIN` shows `<=>` in the sort, and the by-eye review of five questions is in `runs/search_review.md`. PR #4 merged the same day.
 - [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
 - [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`). PR #6 merged the same day.
-- [ ] Layer 7: evaluation. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
+- [x] Layer 7: evaluation. 7a merged as PR #7, 7b (RAGAS) as PR #8 on 2026-10-14. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
 - [ ] Layer 8: wrap-up. Pick the best strategy, write `runs/cycle1_summary.md`, freeze the configuration in `rag/config.py`. Test: `python -m rag.pipeline "<question>"` answers three real questions with citations.
 
 Cycle 2 (deploy, UI, report):
@@ -121,7 +121,9 @@ Later in the session:
     - `judge_inputs` reuses private helpers of `run_eval`. The ranking check now catches any drift between the two.
   - `tests/test_judge.py`: 28 tests. Full checks pass (787 tests).
 
-Still open: the branch, PR and merge by the human.
+- PR #8 merged by the human (`14dd8f1`).
+
+Still open: Layer 8 (wrap-up), in plan mode, when the human says so.
 
 ## 2026-10-14 — Session 8: Layer 7a (evaluation), parallel build in progress
 

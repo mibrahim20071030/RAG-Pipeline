@@ -82,7 +82,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - The prompt has a rule to read every passage and to refuse without citations. It made no measurable difference.
     - A reworded refusal ("Sorry, I cannot provide ...") is still missed.
   - Spend: $1.31 in total, $1.20 of it on reranking.
-- Layer 7b: built on 2026-10-14 (single agent), not yet merged. Results and the review by hand are in `runs/ragas_review.md`.
+- Layer 7b: DONE on 2026-10-14 (single agent), merged as PR #8 (`14dd8f1`). Results and the review by hand are in `runs/ragas_review.md`.
   - RAGAS 0.4.3 runs in a second venv, `datasheet-rag/.venv-ragas` on Python 3.13, because its dependency `scikit-network` has no 3.14 build. Pins are in `datasheet-rag/requirements-ragas.txt`. LangChain must stay on 0.3: RAGAS 0.4.3 imports `langchain_community.chat_models.vertexai`, which 0.4 removed. Only `ragas_run` needs that venv; the project, its tests and CI stay on 3.14 (all tests also pass on 3.13).
   - Nova Pro price verified by the human on 2026-10-14: $0.80 / $3.20 per 1M input / output tokens. The `JUDGE_*` settings are in `rag/config.py`.
   - Files:
