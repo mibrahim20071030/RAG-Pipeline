@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, db, generate, rerank, search
+from rag import config, db, generate, load, rerank, search
 
 # question -> (document, pages that hold the answer), or None when no datasheet answers it.
 # Answers checked in the parsed datasheets on 2026-10-14.
@@ -32,7 +32,7 @@ QUESTIONS = {
     "What is the Bluetooth range of the LM35?": None,
     "How much flash memory does the STM32H743 have?": None,
 }
-GENERATE_TOKENS = (3000, 300)  # rough input and output tokens per answer, for the estimate only
+GENERATE_TOKENS = (4500, 300)  # rough input and output tokens per answer at k 10 (about 4,300 in Layer 7), for the estimate only
 
 REFUSED = """
 Bedrock refused a call: {error}
@@ -68,7 +68,7 @@ def main(argv: list[str]) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Answer six questions end to end and check the behaviour.")
     parser.add_argument("--yes", action="store_true", help="do not ask before the paid calls")
-    parser.add_argument("--strategy", choices=list(config.CHUNK_STRATEGIES), default=config.DEFAULT_STRATEGY)
+    parser.add_argument("--strategy", choices=load.strategy_names(), default=config.DEFAULT_STRATEGY)
     args = parser.parse_args(argv)
 
     try:
