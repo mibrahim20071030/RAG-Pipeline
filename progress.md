@@ -6,6 +6,11 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Next session:
 
+- [x] 2026-10-14: Python 3.13 installed next to 3.14.
+- [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
+- [x] 2026-10-14: Layer 7b smoke run and full judge run approved ($0.87 in total).
+- [ ] Layer 7b: make the branch, commit, PR and merge (Claude lists the changed files).
+
 - [ ] Optional spot check of one table page: from `datasheet-rag` with the venv active, run `python scripts\show_parsed.py lm35 4` and compare it with page 4 of the LM35 PDF (this page had a defect that is now fixed).
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
 - [x] 2026-10-14: PR #6 (Layer 6, generation and citations) merged into `main` (`b57b216`).
@@ -73,6 +78,50 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-14 — Session 9: Layer 7b (RAGAS) built and run
+
+Status at the end: Layer 7b built, run on the shortlist ($0.87) and reviewed by hand; code review pending. The notes below are in the order the work happened.
+
+Done:
+- Checked before planning: RAGAS 0.4.3 (latest) needs `scikit-network`, which has wheels only up to Python 3.13, none for 3.14, and only 3.14 is installed. RAGAS reaches Bedrock through LiteLLM (`llm_factory("bedrock/<id>", provider="litellm", client=litellm.completion)`). Nova Pro price from third-party pages: $0.80 / $3.20 per 1M input / output tokens (not yet confirmed on AWS).
+- Decisions (human): a second venv `.venv-ragas` on Python 3.13 just for RAGAS; judge the exact Layer 7a answers of the four shortlisted setups, with passages rebuilt from the caches (no Nova Lite or Cohere call). Single-agent build: three small files, and the real RAGAS API must be read first.
+- `rag/eval/judge_inputs.py`: `load_answers`, `rebuild_passages` (free: cached question vector, cached rerank scores, a rerank client that fails if used), `strip_labels`, `build_sample(s)` (answerable questions only, citations checked against the 7a CSV), `plan_judge`. `tests/test_judge.py`: 18 pass.
+- Rebuild check on the real data: all 172 answers (43 × 4 setups) rebuild with the same citations; refusals 2 / 6 / 6 / 7 as in 7a.
+- Settings in `rag/config.py`: `JUDGE_*` (price marked VERIFY), `RAGAS_DIR`, `RAGAS_RESULTS` (`runs/results_ragas.csv`, kept in git), `RAGAS_SHORTLIST`. `.venv-ragas/` added to `.gitignore`.
+
+Problem found: the 7a CSV for `gen_prefix_k5` q34 lists a page for a refusal that ended with "[1]" (written before `generate` cleared a refusal's sources). The rebuild check accepts a refusal with or without those labels.
+
+Later in the session:
+- The human installed Python 3.13.15 and confirmed the Nova Pro price on the Bedrock pricing page: $0.80 / $3.20 per 1M input / output tokens (now marked verified in `rag/config.py`).
+- `.venv-ragas` (Python 3.13) made; pins in `datasheet-rag/requirements-ragas.txt`. Problem: RAGAS 0.4.3 failed on import (`langchain_community.chat_models.vertexai` missing) because pip installed LangChain 0.4, which removed it, and RAGAS does not pin LangChain. Fixed by pinning LangChain to 0.3 and removing the leftover langgraph packages; `pip check` is clean. All 777 tests pass on 3.13 too.
+- Read from the installed RAGAS source: `ragas.metrics.collections.Faithfulness` (2 judge calls: statements, then one verdict with reason per statement against all passages joined; NaN when no statement) and `AnswerRelevancy` (`strictness` calls, each writing one question from the answer, cosine with Titan vectors; 0 when noncommittal). Metrics call the LLM asynchronously; `llm_factory(..., provider="litellm", client=<async completion>, adapter="instructor")` uses instructor's JSON mode and sends `temperature`, `top_p` 0.1, `max_tokens`, `response_format` json_object.
+- Decision: answer relevancy strictness 1, not RAGAS's default 3: at temperature 0 the three calls would write the same question. To be stated in the review.
+- `rag/eval/ragas_run.py`: `logged_completion` (calls 5 s apart, throttling retried with doubling waits, two cost log rows per call), `make_scorers` (Nova Pro through LiteLLM, Titan through our cached `question_vector`), `judge_sample` (keeps statements and reasons of unsupported ones), resumable per-answer CSV `runs/ragas/<experiment>.csv`, summary `runs/results_ragas.csv`, CLI with `--shortlist`, `--limit`, `--dry-run`, `--yes`. `tests/test_judge.py` now 23 tests (no RAGAS import, runs in CI). A free end-to-end check through the real RAGAS code with a fake LiteLLM function passed.
+- Dry runs: smoke (3 answers) 9 Nova Pro calls, about $0.02; full shortlist 172 answers, 516 calls, about $0.95 and 46 minutes.
+
+- Smoke run (human's yes): 3 answers of `gen_prefix_k10`, 9 Nova Pro calls, $0.0203 (estimate $0.0209). Nova Pro answered RAGAS's JSON requests through LiteLLM with no retry. Real tokens per answer about 6,900 input and 380 output (estimate 6,700 and 500). Faithfulness 1.0 for all three. Relevancy 1.0 for all three with no Titan call logged: the question written back from each answer was already in `embedding_cache`, so it matched one of our questions word for word (Nova Lite's answers restate the question). To check this in the full run, `ragas_run` now saves that question and the noncommittal flag (a second judge LLM object for relevancy records its replies; RAGAS still computes the score). The 3 smoke rows have the old columns, so they were moved to `runs/ragas/smoke1_gen_prefix_k10.csv` and are judged again in the full run.
+
+- Full run (human's yes): 172 answers, 516 judge calls, no retry or throttling, $0.85 (estimate $0.95), about 33 minutes. 7b total $0.87. Results in `runs/results_ragas.csv` and `runs/ragas_review.md`: `gen_prefix_k10` best (faithfulness 0.972, relevancy 0.859; others 0.83–0.86 / 0.78–0.79). The means follow 7a's false refusals, which the judge scores 0. Over answered questions faithfulness is 0.97–0.995 everywhere; relevancy does not separate setups. The judge found a wrong answer that 7a counted as correct (q08, k 5 setups: LM35 given the LM35A's ±0.2 °C) and a self-contradicting one (q25 at k 10). Judge errors: q33 refusal scored 0 in two setups although its own reason supports it; q34 reason wrong; mis-citations are invisible to it.
+- Read by hand: every answer below full marks and every refusal (about 40 rows), plus 8 answers scored 1.0 (all right).
+- `CLAUDE.md` updated (status, test commands).
+
+- Code review (1 of 2, recorded), 10 findings:
+  - Fixed:
+    - The dry run always said "0 already judged".
+    - An answer made only of labels would have paid for faithfulness calls and then crashed. It is now refused before any call.
+    - `strip_labels` reflowed the whole answer and could join a decimal (".5" became "is.5"). It now removes only the labels and the spaces before them. Checked on all 172 judged answers: no text changed beyond line breaks, so the scores stand.
+    - The rebuild check compared citations only, so a refusal could be judged against other passages. It now also requires the top 10 ranking to equal the 7a CSV's `rerank_hits`. All 172 pass.
+    - A rebuild error gave a traceback; it now gives a "Cannot rebuild" message.
+    - `JUDGE_MIN_INTERVAL_S` is now worked out from `JUDGE_PER_MIN`.
+    - The judge cost formula is written once (`judge_inputs.judge_usd`).
+    - The done-ids set is built once.
+  - Not fixed, reported:
+    - Re-running a 7a generation experiment keeps the old judged rows. Delete `runs/ragas/<experiment>.csv` first; this is noted in `CLAUDE.md`.
+    - `judge_inputs` reuses private helpers of `run_eval`. The ranking check now catches any drift between the two.
+  - `tests/test_judge.py`: 28 tests. Full checks pass (787 tests).
+
+Still open: the branch, PR and merge by the human.
 
 ## 2026-10-14 — Session 8: Layer 7a (evaluation), parallel build in progress
 

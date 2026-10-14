@@ -82,7 +82,26 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - The prompt has a rule to read every passage and to refuse without citations. It made no measurable difference.
     - A reworded refusal ("Sorry, I cannot provide ...") is still missed.
   - Spend: $1.31 in total, $1.20 of it on reranking.
-- Next: Layer 7b (RAGAS), in plan mode, when the human says so. Check the Nova Pro price and RAGAS support for Python 3.14 first.
+- Layer 7b: built on 2026-10-14 (single agent), not yet merged. Results and the review by hand are in `runs/ragas_review.md`.
+  - RAGAS 0.4.3 runs in a second venv, `datasheet-rag/.venv-ragas` on Python 3.13, because its dependency `scikit-network` has no 3.14 build. Pins are in `datasheet-rag/requirements-ragas.txt`. LangChain must stay on 0.3: RAGAS 0.4.3 imports `langchain_community.chat_models.vertexai`, which 0.4 removed. Only `ragas_run` needs that venv; the project, its tests and CI stay on 3.14 (all tests also pass on 3.13).
+  - Nova Pro price verified by the human on 2026-10-14: $0.80 / $3.20 per 1M input / output tokens. The `JUDGE_*` settings are in `rag/config.py`.
+  - Files:
+    - `rag/eval/judge_inputs.py`: the 7a answers plus passages rebuilt from the caches with no paid call; the citations must match the 7a CSV. Also `plan_judge`. No RAGAS import.
+    - `rag/eval/ragas_run.py`: `logged_completion` (judge calls 5 s apart, throttling retried, cost logged), `make_scorers` (`Faithfulness` and `AnswerRelevancy` from `ragas.metrics.collections`, LiteLLM `bedrock/amazon.nova-pro-v1:0`, Titan through `search.question_vector`), resumable `runs/ragas/<experiment>.csv`, summary in `runs/results_ragas.csv`.
+    - `tests/test_judge.py`: 28 tests, no RAGAS import. 787 tests pass in all.
+  - The rebuild is checked three ways: the top 10 ranking must equal the 7a CSV's `rerank_hits`, the citations must match, and an answer that is only labels is refused before any paid call.
+  - Known limit: a re-run of a 7a generation experiment does not clear its judged rows. Delete `runs/ragas/<experiment>.csv` before judging new answers.
+  - The code review is done and recorded (1 of 2).
+  - Faithfulness makes 2 judge calls per answer. Answer relevancy is run with strictness 1 (RAGAS's default is 3), because at temperature 0 the three calls would write the same question.
+  - Results for the four shortlisted setups (43 answerable questions each):
+    - `gen_prefix_k10` is best: faithfulness 0.972, relevancy 0.859. The other three are 0.83–0.86 and 0.78–0.79.
+    - False refusals score 0 on both metrics, so the means follow the 7a refusal counts.
+    - Over answered questions only, faithfulness is 0.97–0.995 in every setup, and relevancy does not separate the setups.
+    - The judge caught a wrong answer that 7a counted as correct (q08: the LM35 given the LM35A's accuracy) and a self-contradicting one (q25 at k 10).
+    - It was wrong on 2 of 21 refusals (q33: the verdict disagrees with its own reason).
+    - It cannot see mis-citations, so the 7a citation check stays.
+  - Spend: $0.87 for the whole of 7b.
+- Next: Layer 8 (wrap-up), in plan mode, when the human says so.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -470,6 +489,8 @@ pytest -q tests/test_metrics.py
 pytest -q                                   # everything
 python -m rag.eval.run_eval baseline --dry-run      # names, or --group <g>, or --all; prints calls, cost, minutes
 python -m rag.eval.run_eval baseline               # real run, asks first; --yes does not ask
+.venv-ragas\Scripts\python -m rag.eval.ragas_run --shortlist --dry-run   # RAGAS judge (Python 3.13 venv); --limit N, --yes
+pytest -q tests/test_judge.py
 python -m rag.pipeline "What is the maximum supply voltage?"
 ```
 
