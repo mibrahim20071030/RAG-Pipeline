@@ -289,20 +289,19 @@ def _summary_row(rows: list[dict], truths: list, exp: dict, reranked: bool, spen
     }
 
 
-def _spent_since(logged_before: int) -> float | None:
+def _spent_since(logged_before: int | None) -> float | None:
     """Cost of the cost log rows added since `logged_before` rows; None when the log cannot be read, so the
     error that stopped a run is never hidden by this one."""
-    try:
-        return sum((float(row["est_cost_usd"]) for row in costlog.read_rows()[logged_before:]), 0.0)
-    except (OSError, ValueError, TypeError, KeyError) as error:
-        print(f"Could not read the cost log ({error}). Check {config.COST_LOG} by hand.", file=sys.stderr)
-        return None
+    spent = costlog.spent_since(logged_before)
+    if spent is None:
+        print(f"Could not read the cost log. Check {config.COST_LOG} by hand.", file=sys.stderr)
+    return spent
 
 
 def run_experiment(conn, questions_: list[dict], exp: dict, embed_fn=None, rerank_client=None,
                    generate_client=None, sleep=time.sleep, clock=time.perf_counter) -> dict:
     """Every question through one experiment: the per-question rows and one or two summary rows."""
-    logged_before = len(costlog.read_rows())
+    logged_before = costlog.row_count()
     rows = []
     for question in questions_:
         rows.append(run_question(conn, question, exp, embed_fn, rerank_client, generate_client, sleep, clock))
@@ -440,7 +439,7 @@ def main(argv: list[str]) -> None:
             print("Stopped. Nothing was called.")
             return
 
-        logged_before = len(costlog.read_rows())
+        logged_before = costlog.row_count()
         try:
             for exp in exps:
                 print(f"\n{exp['name']} ({exp['group']})", flush=True)

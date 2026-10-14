@@ -6,7 +6,9 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Next session:
 
-- [ ] Layer 8: create the branch, commit, open the PR and merge (files listed in the Session 10 entry and in the hand-over message).
+- [ ] Try the web UI: `cd datasheet-rag`, `.venv\Scripts\Activate.ps1`, `python -m rag.server`, open http://127.0.0.1:8000 (Docker and `rag-pg` running). Each new question costs about $0.0023.
+- [x] 2026-10-14: PR #9 (Layer 8) merged into `main` (`ead7ff3`).
+- [ ] Layer 8b: create the branch, commit, open the PR and merge (files listed in the hand-over message). After the merge, check that the README and the screenshot look right on GitHub.
 
 - [x] 2026-10-14: Python 3.13 installed next to 3.14.
 - [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
@@ -80,6 +82,72 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-14 — Session 10b: Layer 8b (local web UI, README)
+
+Status at the end: built, checked and reviewed (review 1 of 2, recorded). It needs its own PR, since Layer 8 was merged as PR #9.
+
+Done:
+- Asked by the human: everything should run locally with a UI like Cycle 2's, and the repo should have a README for recruiters (modelled on the Project 1 README, with no Cycle 2 talk). The plan was approved after the human installed UI skills (`ui-ux-pro-max`, then `web-design-guidelines` and `writing-guidelines`).
+- `rag/api.py` (JSON API without HTTP), `rag/server.py` (standard-library server on 127.0.0.1 only, with a Host check, a JSON-only POST, a PDF allow-list, and reconnect after Postgres restarts), `web/index.html`, `datasheet-rag/requirements.txt`, `docs/ui.png`, `README.md`.
+- In `pipeline`, `warnings`, `logged_rows` and `spent_since` are now public. New settings `WEB_DIR`, `SERVER_*`, `API_MAX_*`.
+- Page design comes from `ui-ux-pro-max`:
+  - Swiss minimal style, dark by default, slate with a green accent;
+  - JetBrains Mono and IBM Plex Sans; Lucide icons;
+  - tokens in three layers, primitive → semantic → component.
+- The `web-design-guidelines` audit found 13 issues, all fixed:
+  - skip link;
+  - `theme-color` and `color-scheme`;
+  - `touch-action`;
+  - explicit colours on `<option>`;
+  - `translate="no"` on code tokens;
+  - tabular numbers;
+  - `min-width: 0` on a flex child;
+  - a pulse animation (opacity only) instead of the background-position shimmer;
+  - curly quotes and the ellipsis;
+  - a non-breaking space in "p. 30";
+  - Title Case;
+  - deep links (`?q=&doc=`).
+- `writing-guidelines`: 12 fixes applied to the README.
+  - One was undone: a password placeholder without angle brackets set off our own secret scan, so `<your_db_password>` stays.
+- Tests: `tests/test_api.py` (24) and `tests/test_server.py` (16). 838 pass in all.
+- Problems:
+  - Two server tests failed now and then with `ConnectionAbortedError`. When the server answered (413, 403) before reading a POST body, Windows reset the connection. `do_POST` now always reads the body (up to 1 MB) first. The server tests passed three runs in a row afterwards.
+  - The old one-line `README.md` was UTF-16, and the rewrite kept that encoding. It is now UTF-8.
+  - The Chrome extension was not connected, so the UI was checked with `curl` and headless Edge. Headless Edge will not lay a page out narrower than 492 px, which made the 390 px screenshot look cut off; at 500 px it fits.
+- Real checks, paid, about $0.012 in all:
+  - through the API: ESP32 SRAM p26; LM35 with the datasheet filter p4; TCTH I2C refused; a new question (ESP32 CPU 240 MHz, pp. 30/26/31; it waited 23 s for the rerank quota);
+  - screenshots in dark and light;
+  - Postgres stopped: 503 with the Docker hint, and it recovered after `docker start`;
+  - a path trick on `/pdfs/` gives 404.
+
+- Code review 1 of 2 for Layer 8b (recorded). Layer 8 was merged by the human as PR #9 (`ead7ff3`) during this session, so 8b is its own layer and PR. 10 findings:
+  - Fixed:
+    - A `?q=` link asked its question as soon as the page opened, so a link from any site could spend money without a click. The link now only fills in the form, and asking waits for the Ask button.
+    - The page found `[n]` with its own regex, so a footnote marker copied from a datasheet (`GPIO16[2]`) could show as a citation. `generate.citation_spans` now applies the server's rules, and the API returns `answer_parts`, which the page draws from.
+    - A non-text `document` (a list or a number) crashed `api.ask`; it now gets 400.
+    - Any unexpected error in a request closed the connection with no answer. The server now returns a JSON 500 and prints the traceback.
+    - A client could stall the single-threaded server forever. `Handler.timeout` is now 15 s.
+    - An IPv6 Host header without a port (`[::1]`) was refused. Hosts are now parsed with `urlsplit`.
+    - The PDF allow-list was read from Postgres on every PDF request. It is now read once.
+    - The "spent since" logic was in two places. It is now `costlog.row_count` and `costlog.spent_since`, used by `pipeline`, `api` and `run_eval`.
+  - Not fixed, reported:
+    - Each question reads the cost log twice (about 3,000 rows, a few milliseconds).
+    - The cost shown also counts rows another process writes during the request (noted in `costlog.spent_since`).
+  - New tests: 9 in `test_api.py`, 13 in `test_server.py`. Full checks pass: 857 tests.
+  - Rechecked on the running server:
+    - the page's script parses (`node --check`);
+    - a `?q=&doc=` link fills in the form and the datasheet and asks nothing;
+    - `answer_parts` comes back for a cached question ($0.0003).
+- On the human's second `/claude-in-chrome` the extension connected. The page was tested in real Chrome, about $0.0004:
+  - an example chip asked its question (ESP32 SRAM, 520 KB, p. 26);
+  - the citation badge highlighted its source card;
+  - "Open PDF" opened the datasheet at page 26 of 78, which shows the 520 KB line;
+  - a typed question sent with Enter: STM32F205 maximum junction temperature, 125 °C, p. 70;
+  - no console errors.
+  - A demo GIF, `datasheet_qa_demo.gif`, was downloaded to the browser's download folder; it is not in the repo.
+
+Still open: the human tries the page and opens the PR for Layer 8b.
 
 ## 2026-10-14 — Session 10: Layer 8 (Cycle 1 wrap-up)
 

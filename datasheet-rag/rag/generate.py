@@ -149,6 +149,20 @@ def resolve_citations(answer: str, chunks: list[dict]) -> dict:
     return {"sources": sources, "invalid": sorted(invalid)}
 
 
+def citation_spans(answer: str, chunks: list[dict]) -> list[tuple[int, int, list[int]]]:
+    """Where the answer cites passages, by the rules of `resolve_citations`: (start, end, labels) for each bracket
+    that names at least one existing passage. Copied footnote markers (GPIO16[2]) and invalid labels are left out,
+    so a page that links these spans shows exactly the citations counted here."""
+    spans = []
+    for match in _LABELS.finditer(answer):
+        if _copied_footnote(answer, match, chunks):
+            continue
+        labels = [label for label in dict.fromkeys(_labels(match.group(1), len(chunks))) if 1 <= label <= len(chunks)]
+        if labels:
+            spans.append((match.start(), match.end(), labels))
+    return spans
+
+
 def _words(text: str) -> str:
     return " ".join(text.lower().split())
 
