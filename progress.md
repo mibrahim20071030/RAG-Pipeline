@@ -9,6 +9,7 @@ Next session (Cycle 2):
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
 - [ ] Optional: check that the README and its screenshot look right on GitHub.
+- [ ] Open the PR for the web page redesign and README tidy-up (`web/index.html`, `README.md`, `docs/ui.png`, `progress.md`) and merge it.
 - [ ] Start Docker Desktop and run `docker start rag-pg` before any session that uses the pipeline.
 - [ ] Before Cycle 2 step 1, have ready:
   - which Python versions Lambda supports;
@@ -95,6 +96,18 @@ Cycle 2 (deploy, UI, report):
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+
+## 2026-10-15 — Session 11: web page redesign
+
+- The human did not like the page: too dark, green, confusing for a recruiter. `datasheet-rag/web/index.html` was rewritten. The JavaScript behaviour and the API are unchanged, and no test depends on the markup.
+  - Light theme only, with a blue accent and no green. One font (Inter) instead of JetBrains Mono and IBM Plex Sans.
+  - New layout: a top bar (name and a "Source code" link to the GitHub repo), a centred heading, one search box with the datasheet filter and the Ask button inside it, three example questions, and a three-step "how it works" row before the first question. Answers show the question, the answer, and the sources in a column on the right (stacked on phones).
+  - Removed: the tech-stack footer (pdfplumber and the other names), the cost note, the evaluation figures in the header, the pipeline steps while loading, and the timing row. Time, cost, passages read and model are now in a collapsed "Response details".
+  - Plain wording: "The datasheets don't cover this." for a refusal, "Page 18 (printed 17)" on sources.
+- Checked first with sample data while Docker Desktop was off, then by the human on the real server ("perfect").
+- `docs/ui.png` retaken in the new design: one real answer from the server ("How much on-chip SRAM does the ESP32 have?", $0.0002), rendered with headless Edge at 1280 x 840. The README alt text now says one cited page.
+- README tidied at the human's request: the question-checking sentence now ends "every answer and page was verified", the SHA-256 sentence is gone, and the Datasheets section ends at "save them in `datasheet-rag/data/pdfs/`" (the table below it now has a Datasheet column and a Link column with the human's download links; the File column is gone).
+- Problem: the page vanished on refresh because no server was running (starting Docker starts only the database). Restarted with `python -m rag.server`.
 
 ## 2026-10-14 — Session 10b: Layer 8b (local web UI, README)
 
