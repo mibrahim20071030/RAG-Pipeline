@@ -2,7 +2,7 @@
 
 A retrieval-augmented generation (RAG) system for electronic component datasheets. Every answer cites the PDF page behind it, and questions the datasheets cannot answer are refused instead of guessed.
 
-![Web UI answering a question about the ESP32, with three cited datasheet pages](docs/ui.png)
+![Web UI answering a question about the ESP32, with the cited datasheet page](docs/ui.png)
 
 **Status:** Local build complete and evaluated. Deployment on AWS is planned as the next phase.
 
@@ -150,8 +150,7 @@ RAGAS was run on the four best setups only.
 
 The test set has 49 questions: 22 table lookups, 10 single values, 6 reworded questions that share few words with the datasheet, 5 comparisons across two datasheets, and 6 with no answer in any datasheet. Each question has an expected answer and the list of PDF pages that hold it.
 
-- The questions were drafted with an AI assistant, and every answer and page was checked against the rendered PDF page before the set was frozen.
-- The file's SHA-256 hash is pinned in the config, and a test fails if the file changes.
+- The questions were drafted with an AI assistant, and every answer and page was verified.
 - The chunking was not tuned to individual questions.
 
 ## Failure Analysis
@@ -195,14 +194,14 @@ In order of expected gain:
 
 ### Datasheets
 
-The PDFs are not included in this repository because of vendor copyright. Download them from the vendors and save them in `datasheet-rag/data/pdfs/` with these names:
+The PDFs are not included in this repository because of vendor copyright. Download them from the vendors and save them in `datasheet-rag/data/pdfs/`.
 
-| File | Datasheet |
+| Datasheet | Link |
 |---|---|
-| `DS_CD00237391.pdf` | STMicroelectronics STM32F205xx / STM32F207xx, DS6329 Rev 18 |
-| `esp32_datasheet_en.pdf` | Espressif ESP32 Series Datasheet, version 5.3 |
-| `lm35.pdf` | Texas Instruments LM35, SNIS159H |
-| `TCTH022BE_datasheet_en_20230425.pdf` | Toshiba TCTH0xxxE series, Rev. 2.0.A |
+| STMicroelectronics STM32F205xx / STM32F207xx, DS6329 Rev 18 | [alldatasheet.com](https://www.alldatasheet.com/datasheet-pdf/pdf/451395/STMICROELECTRONICS/STM32F205XX.html) |
+| Espressif ESP32 Series Datasheet, version 5.3 | [espressif.com](https://documentation.espressif.com/esp32_datasheet_en.pdf) |
+| Texas Instruments LM35, SNIS159H | [ti.com](https://www.ti.com/lit/ds/symlink/lm35.pdf) |
+| Toshiba TCTH0xxxE series, Rev. 2.0.A | [toshiba.semicon-storage.com](https://toshiba.semicon-storage.com/info/TCTH022BE_datasheet_en_20230425.pdf?did=149583&prodName=TCTH022BE) |
 
 ### Installation
 
