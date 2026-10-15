@@ -4,12 +4,19 @@ One entry per working session, newest first. Each entry records the date, what w
 
 ## Your checklist
 
-Next session:
+Next session (Cycle 2):
 
-- [ ] Try the web UI: `cd datasheet-rag`, `.venv\Scripts\Activate.ps1`, `python -m rag.server`, open http://127.0.0.1:8000 (Docker and `rag-pg` running). Each new question costs about $0.0023.
+- [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
+- [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
+- [ ] Optional: check that the README and its screenshot look right on GitHub.
+- [ ] Start Docker Desktop and run `docker start rag-pg` before any session that uses the pipeline.
+- [ ] Before Cycle 2 step 1, have ready:
+  - which Python versions Lambda supports;
+  - access to the AWS console. The dev IAM user can only call Bedrock, so creating Aurora, Lambda, API Gateway and S3 needs another identity, set up by you in the console. Claude never creates credentials.
 - [x] 2026-10-14: PR #9 (Layer 8) merged into `main` (`ead7ff3`).
-- [x] 2026-10-14: PR #10 (Layer 8b, web UI and README) merged into `main` (`0988c26`).
-- [ ] Delete the branch `layer-8b-UI` on GitHub (it was still there after the merge), and check that the README and the screenshot look right there.
+- [x] 2026-10-14: PR #10 (Layer 8b, web UI and README) merged into `main` (`0988c26`); branch `layer-8b-UI` deleted on GitHub.
+- [x] 2026-10-14: port fix pushed to `main` (`5adfa43`).
+- [x] 2026-10-14: web UI tried locally by the human.
 
 - [x] 2026-10-14: Python 3.13 installed next to 3.14.
 - [x] 2026-10-14: Nova Pro price confirmed on the pricing page ($0.80 / $3.20 per 1M tokens).
@@ -20,7 +27,7 @@ Next session:
 - [ ] Optional look at the chunks: from `datasheet-rag`, `python scripts\show_chunks.py lm35 6 structure_aware --tables`.
 - [x] 2026-10-14: PR #6 (Layer 6, generation and citations) merged into `main` (`b57b216`).
 - [x] 2026-10-14: Layer 7a plan approved (split: 7a now, RAGAS as 7b later; Claude drafts the questions, you check; reranker on for all 7 chunking strategies).
-- [ ] Check every question in `datasheet-rag/runs/questions_draft.md` against the PDF: mark each OK / FIX / CUT. Only approved ones go into `data/questions.jsonl`.
+- [x] Superseded: the questions were checked by Claude against the rendered PDF pages, at the human's request, and frozen (Layer 7a). The README says so.
 - [x] 2026-10-14: Nova Lite price confirmed on the pricing page; Layer 6 smoke run approved and passed 6 of 6.
 - [ ] After a restart of the PC, open Docker Desktop and run `docker start rag-pg`.
 
@@ -52,9 +59,13 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Check on GitHub that the workflow passed for the pushes to `main` (first runs of the push trigger, `ubuntu-24.04` and the v6 actions).
-2. Optional: spot-check one table page (checklist above).
-3. Layer 2 (chunking) starts only when the human says so, in plan mode. Read "Defects found" and "Known limits" in `runs/parse_review.md` first: those two defects, merged cells, two-row headers and figure tables all land on the chunker.
+1. Cycle 1 is complete. Cycle 2 step 1 (Aurora smoke test) starts only when the human says so, in plan mode.
+2. Read "Open for Cycle 2" in `datasheet-rag/runs/cycle1_summary.md` first. It covers:
+   - the reranker's limit of 3 calls a minute for a public demo (throttle, or serve without it: R@5 0.953, MRR 0.834);
+   - the caches that need write access;
+   - the Lambda Python version.
+3. The web page (`datasheet-rag/web/index.html`) and the API (`rag/api.py`, no HTTP) already exist. Cycle 2 step 6 hosts the same page from S3, and the Lambda handler can call `api.ask`.
+4. Check on GitHub that the workflow passed for the push of `5adfa43`.
 
 Carried over from Layer 0:
 
@@ -70,7 +81,8 @@ Cycle 1 (local pipeline and evaluation):
 - [x] Layer 5: reranking. Built and reviewed on 2026-10-13; `tests/test_rerank.py` passes (32 tests), the two-chunk test passed on the real model, and the five-question review is in `runs/rerank_review.md`. PR #5 merged the same day.
 - [x] Layer 6: generation and citations. Built and reviewed on 2026-10-14; `tests/test_generate.py` passes (39 tests), and the smoke run of 3 answerable and 3 unanswerable questions passed 6 of 6 (`runs/generation_smoke.md`). PR #6 merged the same day.
 - [x] Layer 7: evaluation. 7a merged as PR #7, 7b (RAGAS) as PR #8 on 2026-10-14. Hand-built `data/questions.jsonl` (about 40 questions), `metrics.py`, `run_eval.py` with a dry run that prints call count and cost, the strategy comparisons, and RAGAS on the best 3 or 4 strategies. Verify the Nova Pro price before any RAGAS run.
-- [x] Layer 8: wrap-up. Built on 2026-10-14: `fixed_400_prefix`, hybrid, reranker, k 10 frozen in `rag/config.py`; `runs/cycle1_summary.md` written; `python -m rag.pipeline` answered three real questions with the right pages, refused a no-answer one, and answered a new one. Waiting for the PR.
+- [x] Layer 8: wrap-up. Built on 2026-10-14: `fixed_400_prefix`, hybrid, reranker, k 10 frozen in `rag/config.py`; `runs/cycle1_summary.md` written; `python -m rag.pipeline` answered three real questions with the right pages, refused a no-answer one, and answered a new one. PR #9 merged.
+- [x] Layer 8b: local web UI (`python -m rag.server`) and the recruiter README. PR #10 merged on 2026-10-14; port fix `5adfa43`.
 
 Cycle 2 (deploy, UI, report):
 
@@ -79,7 +91,7 @@ Cycle 2 (deploy, UI, report):
 - [ ] 3. Load chunks and vectors into Aurora.
 - [ ] 4. Lambda: package the pipeline and `handler.py` with an IAM role, concurrency cap and Aurora-resume retry. Check which Python versions Lambda supports first.
 - [ ] 5. API Gateway: route, throttling, daily cap, input and output limits, CORS.
-- [ ] 6. Frontend: one HTML page hosted in S3.
+- [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Evaluation report and recorded demo.
 - [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
@@ -152,7 +164,11 @@ Done:
   - Why: Python's `HTTPServer` sets `SO_REUSEADDR`, and on Windows that lets a second program bind a port already in use; requests then reach either server.
   - Fix: `allow_reuse_address` is off on Windows (`server._Server`), so a second start fails with "Cannot listen on port 8000". Checked against the human's running server, plus a test. 858 tests pass.
 
-Still open: delete the `layer-8b-UI` branch on GitHub. Cycle 1 is complete; Cycle 2 starts in plan mode when the human says so.
+- End of session: the human deleted `layer-8b-UI` on GitHub; the local branch remains (optional `git branch -D`). The checklist and "What is left" are rewritten for Cycle 2. `CLAUDE.md` Cycle 2 step 6 now builds on the existing page, and notes that the PDF links need a decision (vendor copyright).
+
+- Problem, not fixed: on the last commit (Markdown only), the pre-commit `pytest -q` hung for more than 6 minutes; a normal run takes about 75 s. Two full runs passed earlier the same evening. This time the human's own `rag.server` was running in another tab, so suspect a test that touches Postgres or the server. That commit was made with `--no-verify` at the human's request ("just force it"). Next session: run `pytest -q -o faulthandler_timeout=60` to see which test hangs, and fix it.
+
+Still open: the hanging test above. Cycle 1 is complete; Cycle 2 starts in plan mode when the human says so.
 
 ## 2026-10-14 — Session 10: Layer 8 (Cycle 1 wrap-up)
 
