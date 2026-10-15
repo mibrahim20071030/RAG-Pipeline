@@ -44,26 +44,7 @@ Measured on 49 hand-checked questions: 43 with an answer in the datasheets and 6
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph Ingestion
-    A["PDF datasheets"] --> B["pdfplumber parsing<br/>table rows keep column labels"]
-    B --> C["400-token chunks<br/>with part and section header line"]
-    C --> D["Amazon Titan Text<br/>Embeddings V2"]
-    D --> E[("PostgreSQL + pgvector")]
-  end
-  subgraph Query
-    Q["Question"] --> V["Vector search"]
-    Q --> K["Full-text search<br/>IDF-weighted"]
-    E --> V
-    E --> K
-    V --> R["Reciprocal Rank Fusion"]
-    K --> R
-    R --> RR["Cohere Rerank 3.5<br/>top 10 passages"]
-    RR --> G["Amazon Nova Lite<br/>grounded answer with [n] citations"]
-    G --> M["Citation mapping<br/>datasheet and page, invalid labels flagged"]
-  end
-```
+![Architecture: ingestion pipeline, shared Postgres store, and query pipeline with hybrid retrieval, reranking, generation, and citation validation](docs/architecture.png)
 
 Design decisions:
 
