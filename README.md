@@ -68,7 +68,7 @@ Design decisions:
 | Answer generation | Amazon Nova Lite (AWS Bedrock) |
 | Evaluation | Custom recall@k, MRR, and citation checks, plus RAGAS with Amazon Nova Pro as judge |
 | Serving | Python server with a web UI and a JSON API |
-| Testing | pytest |
+| Testing | pytest: 858 tests across parsing, chunking, search, reranking, generation, evaluation, API and server; ruff linting; GitHub Actions CI on every PR |
 
 ## Evaluation
 
