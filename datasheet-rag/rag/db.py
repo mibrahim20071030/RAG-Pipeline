@@ -66,8 +66,13 @@ def connect(schema: str | None = None) -> psycopg.Connection:
         password=config.PG_PASSWORD, connect_timeout=5, autocommit=True,
     )
     if schema is not None:
-        conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+        use_schema(conn, schema)
     return conn
+
+
+def use_schema(conn: psycopg.Connection, schema: str) -> None:
+    """Put `schema` first on the search path of this connection, so the tables are created and read there."""
+    conn.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
 
 
 def create_schema(conn: psycopg.Connection) -> None:
@@ -377,3 +382,18 @@ def create_test_schema(conn: psycopg.Connection, name: str) -> None:
 
 def drop_test_schema(conn: psycopg.Connection, name: str) -> None:
     conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(_test_schema(name)))
+
+
+def server_info(conn: psycopg.Connection) -> dict:
+    """The server version string and the installed pgvector version (None when the extension is missing)."""
+    row = conn.execute(DATA_API_SMOKE["server_info"]).fetchone()
+    return {"version": row[0], "pgvector": row[1]}
+
+
+# Statements the Aurora smoke test sends through the RDS Data API (Cycle 2 step 1). Vectors travel as text
+# parameters and come back as text or as a distance, because the Data API has no vector type.
+DATA_API_SMOKE = {
+    "server_info": "SELECT version(), (SELECT extversion FROM pg_extension WHERE extname = 'vector')",
+    "distance": "SELECT CAST(:v AS vector) <=> CAST(:w AS vector)",
+    "round_trip": "SELECT CAST(CAST(:v AS vector) AS text)",
+}
