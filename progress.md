@@ -11,7 +11,9 @@ Next session (Cycle 2):
 - [ ] Optional: check that the README and its screenshot look right on GitHub.
 - [ ] Open the PR for the web page redesign and README tidy-up (`web/index.html`, `README.md`, `docs/ui.png`, `progress.md`) and merge it.
 - [ ] Start Docker Desktop and run `docker start rag-pg` before any session that uses the pipeline.
-- [ ] Before Cycle 2 step 1, have ready:
+- [ ] Open the PR for Cycle 2 step 1 (Aurora smoke test) and merge it.
+- [x] 2026-10-16: Cycle 2 step 1 console work done (cluster, roles, Data API, secret, inline policy `rag-aurora-smoke`, `.env`).
+- [x] 2026-10-16 (done): Before Cycle 2 step 1, have ready:
   - which Python versions Lambda supports;
   - access to the AWS console. The dev IAM user can only call Bedrock, so creating Aurora, Lambda, API Gateway and S3 needs another identity, set up by you in the console. Claude never creates credentials.
 - [x] 2026-10-14: PR #9 (Layer 8) merged into `main` (`ead7ff3`).
@@ -97,6 +99,55 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-16 — Session 13: Cycle 2 step 1 (Aurora smoke test), in progress
+
+Done:
+- Planned in plan mode and approved. The plan was single agent; the human chose to test both connection ways, preferring direct, and to run the checks from the laptop.
+- Checked in the AWS docs:
+  - On the Free plan, Aurora PostgreSQL can be created only with "express configuration": max 4 ACU, 1 GB of storage, 2 clusters.
+  - An express cluster has no VPC. It is reached through an internet access gateway with IAM-token login only; the Data API can be turned on afterwards, but only with a separate password user kept in Secrets Manager.
+  - Auto-pause needs PG 16.3+ or 15.7+. A resume takes about 15 s (30 s or more after a day).
+  - Lambda supports `python3.14` (AL2023, until 2029-06-30).
+  - Prices: $0.12 per ACU-hour, $0.10 per GB-month, Data API $0.35 per 1M requests.
+- Code:
+  - `rag/config.py`: the `AURORA_*` settings.
+  - `rag/db.py`: `server_info` and `DATA_API_SMOKE`.
+  - `scripts/aurora_smoke.py` with three commands: `direct` (runs the real `db.py` SQL in a throwaway schema), `data-api` and `resume`.
+  - `.env.example`, and 4 new tests in `tests/test_db.py`.
+  - Checks pass: 663 passed; 199 skipped because Docker was not running.
+- The human chose not to set up the AWS Agent Toolkit for now. Console work stays with the human.
+
+- Part A was done by the human in the console:
+  - cluster `datasheet-rag` with 0–4 ACU, PostgreSQL 17.9, pgvector 0.8.1;
+  - roles `rag_app` and `rag_data`;
+  - the Data API, turned on with `aws rds enable-http-endpoint` in CloudShell, because the Modify page has no setting for it;
+  - the secret `datasheet-rag/rag_data`;
+  - the inline policy `rag-aurora-smoke`;
+  - the keys in `.env`.
+- Live run, all passed (`runs/aurora_smoke.md`):
+  - `direct` connected in 5.7 s and ran all of `db.py` on Aurora.
+  - `data-api` round-tripped 1024-number vectors.
+  - The pause to 0 ACU was seen twice.
+  - Resume took 18.8 s by the direct way and 17.6 s through the Data API.
+  - The local database is 134 MB, under the 1 GB limit.
+  - 862 tests pass with Docker up.
+- Problems met:
+  - The express cluster's Modify page has no Data API setting; the CLI turned it on.
+  - The IAM JSON editor reported a syntax error after a paste; re-pasting a compact version fixed it.
+  - `\du` in PostgreSQL 16 and later no longer shows role membership.
+
+- Code review done (1 of 2), 8 of 10 findings fixed:
+  - the IAM token is now sent only after the server certificate is checked (`verify-full`). On Windows that needs botocore's CA bundle, because libpq's `system` store is empty there;
+  - the search_path SQL moved to `db.use_schema`;
+  - one Data API client per run, so the per-call times are now 0.05–0.09 s;
+  - an empty `AURORA_PORT` no longer breaks every import.
+- Not changed: a missing pgvector stops the direct test, which matches the stop rule. The only error seen while the Data API resumed was `DatabaseResumingException`, so no other retry was added.
+- Both live checks were run again and pass. 862 tests pass.
+
+Open:
+- The human's branch and PR.
+- Step 2 plan: decide direct IAM-token vs Data API (recommendation: direct). If direct, delete the secret, the `rag_data` role and the Data API endpoint.
 
 ## 2026-10-16 — Session 12: plan change, Knowledge Base comparison
 

@@ -137,3 +137,14 @@ PG_PORT = int(os.environ.get("PGPORT", "5432"))
 PG_USER = os.environ.get("PGUSER", "postgres")
 PG_DATABASE = os.environ.get("PGDATABASE", "postgres")
 PG_PASSWORD = os.environ.get("PGPASSWORD", "")
+
+# Aurora (Cycle 2). Identifiers from .env, not secrets: express clusters log in with IAM tokens, and the Data API
+# reads its password from the Secrets Manager secret. Empty until the cluster exists.
+AURORA_HOST = os.environ.get("AURORA_HOST", "")
+AURORA_PORT = int(os.environ.get("AURORA_PORT") or "5432")
+AURORA_DATABASE = os.environ.get("AURORA_DATABASE", "postgres")
+AURORA_USER = os.environ.get("AURORA_USER", "rag_app")
+AURORA_CLUSTER_ARN = os.environ.get("AURORA_CLUSTER_ARN", "")
+AURORA_SECRET_ARN = os.environ.get("AURORA_SECRET_ARN", "")
+# A resume after auto-pause takes about 15 s, 30 s or more after a day (AWS docs, checked 2026-10-16).
+AURORA_CONNECT_TIMEOUT_S = 60

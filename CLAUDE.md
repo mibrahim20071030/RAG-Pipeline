@@ -137,6 +137,34 @@ This file is the build plan. Read it fully before writing code. Work one layer a
 - Cycle 1 is complete.
 - Next: Cycle 2 step 1 (Aurora smoke test), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
+- Cycle 2 step 1 (Aurora smoke test): BUILT and run on 2026-10-16, single agent, waiting for the human's PR. Results are in `runs/aurora_smoke.md`.
+  - Free plan facts, verified in the AWS docs on 2026-10-16:
+    - Aurora can be created only with **express configuration**: at most 4 ACU, 1 GB of storage and 2 clusters.
+    - An express cluster has **no VPC**. It is reached over the internet through the "internet access gateway" on port 5432.
+    - Login is **IAM-token only**: no master password and no Secrets Manager master secret.
+    - The engine version is AWS's default: it can be upgraded, never downgraded.
+    - The Data API can be turned on only with `aws rds enable-http-endpoint` (the console's Modify page has no setting for it), and it needs a separate password user whose password is kept in Secrets Manager.
+  - The cluster as built:
+    - `datasheet-rag`, us-east-1, Aurora PostgreSQL **17.9** with pgvector **0.8.1** (locally we stay on pg16).
+    - Capacity 0–4 ACU, pause after 5 minutes idle.
+    - Roles: `rag_app` (has `rds_iam`, for the direct way) and `rag_data` (password in secret `datasheet-rag/rag_data`, for the Data API).
+    - The dev IAM user has the inline policy `rag-aurora-smoke`: `rds-db:connect` for `rag_app`, `rds-data:ExecuteStatement`, `secretsmanager:GetSecretValue`.
+    - The `AURORA_*` identifiers are in `datasheet-rag\.env`. The account ID and the endpoint never go in the repo.
+  - Results:
+    - All of `rag/db.py` ran unchanged over the direct way (psycopg plus IAM token, `sslmode=require`).
+    - The Data API round-tripped 1024-number vectors.
+    - The cluster paused at 0 ACU.
+    - Resume to the first answer took 18.8 s by the direct way and 17.6 s through the Data API (retried on `DatabaseResumingException`).
+    - The local database is 134 MB, which fits the 1 GB limit.
+  - Files:
+    - `scripts/aurora_smoke.py` (`direct`, `data-api`, `resume --path`);
+    - `rag/db.py` `server_info` and `DATA_API_SMOKE`;
+    - the `AURORA_*` settings in `rag/config.py`.
+  - Lambda supports `python3.14` (AL2023, until 2029-06-30), so no downgrade is needed.
+  - TLS: connect with `sslmode=verify-full`. On Windows `sslrootcert=system` fails (OpenSSL's store is empty), so the script uses botocore's `cacert.pem`; choose the bundle for Lambda in step 2.
+  - Code review done and recorded (1 of 2): 8 of 10 findings fixed (certificate check, search_path SQL moved to `db.use_schema`, one Data API client, empty `AURORA_PORT`, and smaller ones). 862 tests pass.
+  - Recommendation for step 2 (to be decided in its plan): the **direct IAM-token connection** in `db.connect` instead of a Data API backend. After that the human deletes the secret, the `rag_data` role and the Data API endpoint.
+  - The cluster stays paused for steps 2 and 3.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -448,7 +476,7 @@ CREATE TABLE rerank_cache (
 
 Order of work, each with a test written when the step starts:
 
-1. **Aurora smoke test (first step).** Create an Aurora PostgreSQL Serverless v2 cluster on the Free plan with minimum capacity 0 ACU. Enable the Data API. Run `CREATE EXTENSION vector`. If pgvector, minimum 0 ACU, or the Data API do not work on this account, switch to the RDS db.t4g.micro fallback and note the cost.
+1. **Aurora smoke test (first step). DONE 2026-10-16, see Current status.** Original plan: create an Aurora PostgreSQL Serverless v2 cluster on the Free plan with minimum capacity 0 ACU. Enable the Data API. Run `CREATE EXTENSION vector`. If pgvector, minimum 0 ACU, or the Data API do not work on this account, switch to the RDS db.t4g.micro fallback and note the cost.
 2. **Data access layer.** Add the Data API backend to `rag/db.py`. The same query tests from Layer 4 must pass against both backends. Check the Data API response size limit and parameter handling for vectors (VERIFY).
 3. **Load the data.** Load chunks and vectors into Aurora, using batch statements. Confirm row counts and vector dimensions.
 4. **Lambda.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
@@ -468,7 +496,8 @@ Order of work, each with a test written when the step starts:
 - Delete the API Gateway API and the Lambda function and its role.
 - Empty and delete the S3 buckets (page and PDFs).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
-- Delete the Aurora cluster. Skip the final snapshot unless one is wanted. Delete any manual snapshots and the Secrets Manager secret.
+- Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots and the Secrets Manager secret `datasheet-rag/rag_data`.
+- Remove the inline policy `rag-aurora-smoke` from the dev IAM user (if the user itself is not deleted first).
 - Delete the IAM user and its access keys.
 - Check CloudWatch log groups, and delete them.
 - Check Billing and Cost Management the next day and a week later. Confirm no new charges.
