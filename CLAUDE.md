@@ -135,9 +135,9 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 1 (Aurora smoke test), in plan mode, when the human says so.
+- Next: Cycle 2 step 2 (data access layer), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
-- Cycle 2 step 1 (Aurora smoke test): BUILT and run on 2026-10-16, single agent, waiting for the human's PR. Results are in `runs/aurora_smoke.md`.
+- Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
     - Aurora can be created only with **express configuration**: at most 4 ACU, 1 GB of storage and 2 clusters.
     - An express cluster has **no VPC**. It is reached over the internet through the "internet access gateway" on port 5432.

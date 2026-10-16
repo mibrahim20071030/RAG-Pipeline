@@ -11,7 +11,7 @@ Next session (Cycle 2):
 - [ ] Optional: check that the README and its screenshot look right on GitHub.
 - [ ] Open the PR for the web page redesign and README tidy-up (`web/index.html`, `README.md`, `docs/ui.png`, `progress.md`) and merge it.
 - [ ] Start Docker Desktop and run `docker start rag-pg` before any session that uses the pipeline.
-- [ ] Open the PR for Cycle 2 step 1 (Aurora smoke test) and merge it.
+- [x] 2026-10-16: PR #12 (Cycle 2 step 1, Aurora smoke test) merged into `main` (`faa47cb`).
 - [x] 2026-10-16: Cycle 2 step 1 console work done (cluster, roles, Data API, secret, inline policy `rag-aurora-smoke`, `.env`).
 - [x] 2026-10-16 (done): Before Cycle 2 step 1, have ready:
   - which Python versions Lambda supports;
@@ -62,7 +62,7 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Cycle 1 is complete. Cycle 2 step 1 (Aurora smoke test) starts only when the human says so, in plan mode.
+1. Cycle 2 step 1 is done (PR #12). Step 2 (data access layer) starts only when the human says so, in plan mode. Its plan decides direct IAM-token connection vs Data API (recommended: direct), and with it the cleanup of the secret, the `rag_data` role and the Data API endpoint.
 2. Read "Open for Cycle 2" in `datasheet-rag/runs/cycle1_summary.md` first. It covers:
    - the reranker's limit of 3 calls a minute for a public demo (throttle, or serve without it: R@5 0.953, MRR 0.834);
    - the caches that need write access;
@@ -89,7 +89,7 @@ Cycle 1 (local pipeline and evaluation):
 
 Cycle 2 (deploy, UI, report):
 
-- [ ] 1. Aurora smoke test (Serverless v2, minimum 0 ACU, Data API, `CREATE EXTENSION vector`). Fallback: RDS db.t4g.micro.
+- [x] 1. Aurora smoke test. Passed on 2026-10-16 (`runs/aurora_smoke.md`), PR #12 merged.
 - [ ] 2. Data API backend in `rag/db.py`; the Layer 4 query tests pass against both backends.
 - [ ] 3. Load chunks and vectors into Aurora.
 - [ ] 4. Lambda: package the pipeline and `handler.py` with an IAM role, concurrency cap and Aurora-resume retry. Check which Python versions Lambda supports first.
@@ -100,7 +100,9 @@ Cycle 2 (deploy, UI, report):
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
 
-## 2026-10-16 — Session 13: Cycle 2 step 1 (Aurora smoke test), in progress
+## 2026-10-16 — Session 13: Cycle 2 step 1 (Aurora smoke test), done
+
+- PR #12 merged by the human (`faa47cb`). Before it, Claude explained step 1 in plain language: the two connection ways, why two database users, the inline policy, and that an IAM token is signed from the access key but is not the key. The Data API cleanup waits for the step 2 plan.
 
 Done:
 - Planned in plan mode and approved. The plan was single agent; the human chose to test both connection ways, preferring direct, and to run the checks from the laptop.
