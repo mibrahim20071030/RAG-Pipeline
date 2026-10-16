@@ -136,6 +136,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
 - Next: Cycle 2 step 1 (Aurora smoke test), in plan mode, when the human says so.
+- Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -222,6 +223,7 @@ Rules for the agents (also written into each definition):
 | recall@k definition | Hit rate: for each question, 1 if at least one correct chunk is in the top k, else 0, averaged over questions. A question may list several acceptable (doc, page) pairs. | Defined once, used everywhere. MRR is reported alongside. |
 | Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 10 (frozen at Layer 8; k 5 was the start value). | k 10 cut false refusals from 6 to 2 (Layer 7). |
 | Frontend | One static HTML page with `fetch` (`datasheet-rag/web/index.html`), served by `rag/server.py` locally in Cycle 1 and from S3 in Cycle 2 | No framework or build step. Built in Layer 8b. |
+| Managed comparison | A second pipeline on Bedrock Knowledge Bases with S3 Vectors, built after the deployed evaluation and judged with the same questions and metrics (Cycle 2 step 8). | Shows whether the managed service is worth the control it takes away (hybrid search, table chunking). Decided by the human on 2026-10-16. |
 | Public demo | Throttled API Gateway plus Lambda concurrency cap. Torn down after publishing. A recorded demo and the repo stay as the portfolio artifact. | A public URL is the main spending risk. |
 
 ## Architecture
@@ -453,13 +455,19 @@ Order of work, each with a test written when the step starts:
 5. **API Gateway.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
 6. **Frontend.** The page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
 7. **Deployed evaluation.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
-8. **Report.** Write the evaluation report: setup, the 40-question set, results table (recall@k, MRR, RAGAS faithfulness and relevancy, latency, cost), failure analysis by question type, and what was learned. Add a recorded demo.
-9. **Teardown.** After publishing, run the teardown checklist and confirm in Billing that spend has stopped.
+8. **Knowledge Base comparison (added 2026-10-16).** Build a second RAG pipeline with Amazon Bedrock Knowledge Bases, using an S3 Vectors vector store, and compare it with our pipeline. It gets its own plan in plan mode; split it into smaller steps there if needed. What is known so far:
+   - Fair comparison: same 4 PDFs, same 49 frozen questions, and the same models where the KB allows them (Titan V2 1024, Cohere Rerank 3.5, Nova Lite) (VERIFY that the KB accepts each one). Change one thing at a time.
+   - Two levels: retrieval only (KB `Retrieve` against our hybrid search plus reranker: recall@k, MRR) and end to end (KB `RetrieveAndGenerate` against `answer_question`: citation hit rate, refusals, and RAGAS on the best setup if the budget allows). Map KB results to `(document, page)` hits so `rag/eval/metrics.py` is reused unchanged. The page number for a PDF chunk is expected in the result metadata (VERIFY the field name).
+   - Expected differences to test, not assume: S3 Vectors is believed to support vector search only, with KB hybrid search needing another store such as OpenSearch Serverless or Aurora (VERIFY); our custom table chunking against the KB parsers (default, foundation model parser, Bedrock Data Automation; VERIFY options and prices); KB chunking options (fixed, hierarchical, semantic, none); build effort, latency and cost per question.
+   - Friction: the dev IAM user can only call Bedrock, so the human creates the S3 bucket, the S3 vector bucket and index, and the KB service role in the console. Ingestion runs through the Titan quota (60 a minute), and a reranked KB run of 49 questions takes about 17 minutes (Rerank 3 a minute), with no help from our rerank cache. Check S3 Vectors and KB prices before any paid run, and print calls and cost first as usual.
+9. **Report.** Write the evaluation report: setup, the 40-question set, results table (recall@k, MRR, RAGAS faithfulness and relevancy, latency, cost), failure analysis by question type, the comparison with the Knowledge Base pipeline, and what was learned. Add a recorded demo.
+10. **Teardown.** After publishing, run the teardown checklist and confirm in Billing that spend has stopped.
 
 ### Teardown checklist
 
 - Delete the API Gateway API and the Lambda function and its role.
 - Empty and delete the S3 buckets (page and PDFs).
+- Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
 - Delete the Aurora cluster. Skip the final snapshot unless one is wanted. Delete any manual snapshots and the Secrets Manager secret.
 - Delete the IAM user and its access keys.
 - Check CloudWatch log groups, and delete them.
@@ -548,5 +556,6 @@ Cycle 2 is done when:
 - The web page answers a question end to end with page-level citations.
 - The throttling, concurrency cap, and input limits are in place and tested.
 - The deployed evaluation records latency and cost per query.
+- The Knowledge Base pipeline is evaluated on the same 49 questions and compared with ours on retrieval and answers.
 - The evaluation report and a recorded demo are in the repo.
 - The teardown checklist is complete and Billing confirms spending has stopped.

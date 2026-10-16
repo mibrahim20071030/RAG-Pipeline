@@ -94,8 +94,16 @@ Cycle 2 (deploy, UI, report):
 - [ ] 5. API Gateway: route, throttling, daily cap, input and output limits, CORS.
 - [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
-- [ ] 8. Evaluation report and recorded demo.
-- [ ] 9. Teardown checklist, then confirm in Billing that spend has stopped.
+- [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
+- [ ] 9. Evaluation report (including the comparison) and recorded demo.
+- [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-16 — Session 12: plan change, Knowledge Base comparison
+
+- Decided (the human): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours. Added as Cycle 2 step 8 in `CLAUDE.md`; report and teardown moved to steps 9 and 10, and the teardown checklist and definition of done now cover the KB resources.
+- Approach agreed in discussion: same PDFs, questions and models where possible; compare retrieval (recall@k, MRR) and end-to-end answers (citations, refusals, RAGAS if affordable); reuse `metrics.py` by mapping KB results to `(document, page)`.
+- Open, all VERIFY when step 8 is planned: which models the KB accepts, the page-number metadata field, whether S3 Vectors supports hybrid search, KB parser options and prices, S3 Vectors price. The human creates the KB resources and service role in the console.
+- No code changed. Next is still Cycle 2 step 1 (Aurora smoke test), in plan mode, when the human says so.
 
 ## 2026-10-15 — Session 11: web page redesign
 
