@@ -138,13 +138,19 @@ PG_USER = os.environ.get("PGUSER", "postgres")
 PG_DATABASE = os.environ.get("PGDATABASE", "postgres")
 PG_PASSWORD = os.environ.get("PGPASSWORD", "")
 
-# Aurora (Cycle 2). Identifiers from .env, not secrets: express clusters log in with IAM tokens, and the Data API
-# reads its password from the Secrets Manager secret. Empty until the cluster exists.
+# Which database `db.connect()` reaches: "local" (the Docker Postgres above) or "aurora" (Cycle 2).
+DB_TARGET = os.environ.get("DB_TARGET", "local")
+
+# Aurora (Cycle 2). Identifiers from .env, not secrets: express clusters log in with IAM tokens.
 AURORA_HOST = os.environ.get("AURORA_HOST", "")
 AURORA_PORT = int(os.environ.get("AURORA_PORT") or "5432")
 AURORA_DATABASE = os.environ.get("AURORA_DATABASE", "postgres")
 AURORA_USER = os.environ.get("AURORA_USER", "rag_app")
-AURORA_CLUSTER_ARN = os.environ.get("AURORA_CLUSTER_ARN", "")
-AURORA_SECRET_ARN = os.environ.get("AURORA_SECRET_ARN", "")
 # A resume after auto-pause takes about 15 s, 30 s or more after a day (AWS docs, checked 2026-10-16).
 AURORA_CONNECT_TIMEOUT_S = 60
+AURORA_CONNECT_ATTEMPTS = 3
+AURORA_RETRY_PAUSE_S = 5  # a refused connection while the cluster wakes fails at once; wait before the next try
+# Worst case is 3 x 60 s, well past API Gateway's 29 s. Lambda (step 4) must set a lower timeout and fewer attempts.
+# CA bundle the server certificate is checked against. Empty means the one that ships with botocore: libpq's
+# "system" store is empty on Windows, and botocore is in the Lambda runtime too.
+AURORA_CA_BUNDLE = os.environ.get("AURORA_CA_BUNDLE", "")

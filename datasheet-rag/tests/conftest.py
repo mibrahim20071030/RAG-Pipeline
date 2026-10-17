@@ -4,16 +4,24 @@ import uuid
 import psycopg
 import pytest
 
-from rag import db
+from rag import config, db
 
 
 @pytest.fixture(scope="session")
 def database():
-    """Skips the tests that need Postgres when it cannot be reached. Asked once, and only when one is run."""
+    """Skips the tests that need Postgres when it cannot be reached. Asked once, and only when one is run.
+
+    The database is the one `DB_TARGET` names, so `DB_TARGET=aurora` runs these tests on Aurora (opt-in, costs
+    Aurora time). Without credentials or settings for it, the tests skip.
+    """
+    import botocore.exceptions
+
     try:
         db.connect().close()
-    except psycopg.OperationalError:
-        pytest.skip("no local Postgres (start it with: docker start rag-pg)")
+    except (psycopg.OperationalError, ValueError, botocore.exceptions.BotoCoreError) as error:
+        if config.DB_TARGET == "local":
+            pytest.skip("no local Postgres (start it with: docker start rag-pg)")
+        pytest.skip(f"database {config.DB_TARGET!r} not reachable: {error}")
 
 
 @pytest.fixture

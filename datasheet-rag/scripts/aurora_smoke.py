@@ -1,12 +1,10 @@
-"""Cycle 2 step 1: the Aurora smoke test. No Bedrock calls; the only cost is Aurora capacity time.
+"""The Aurora smoke test (Cycle 2 step 1). No Bedrock calls; the only cost is Aurora capacity time.
 
 Run from datasheet-rag, with the AURORA_* keys in .env (see .env.example):
-    python scripts\\aurora_smoke.py direct                    # psycopg + IAM token, runs the real rag/db.py SQL
-    python scripts\\aurora_smoke.py data-api                  # RDS Data API with the Secrets Manager secret
-    python scripts\\aurora_smoke.py resume --path direct      # after 10+ idle minutes: time to the first answer
+    python scripts\\aurora_smoke.py direct      # db.connect() with DB_TARGET=aurora, runs the real rag/db.py SQL
+    python scripts\\aurora_smoke.py resume      # after 10+ idle minutes: time to the first answer
 """
 import argparse
-import functools
 import sys
 import time
 import uuid
@@ -14,19 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import boto3
-import botocore
 import psycopg
 
 from rag import config, db
 
-CONNECT_ATTEMPTS = 3
-DATA_API_RETRY_S = 5
-DATA_API_WAIT_S = 60
 STRATEGY = "smoke"
-# The gateway's certificate chains to Amazon's public root CAs. On Windows, libpq's "system" store is OpenSSL's
-# and is empty, so the server is checked against the CA bundle that ships with botocore instead.
-CA_BUNDLE = str(Path(botocore.__file__).parent / "cacert.pem")
 
 
 def need(*names: str) -> None:
@@ -42,27 +32,13 @@ def unit_vector(position: int) -> list[float]:
     return vector
 
 
-def connect_direct() -> tuple[psycopg.Connection, float]:
-    """A connection through the internet access gateway with a fresh IAM token, retried as AWS advises."""
+def connect_aurora() -> tuple[psycopg.Connection, float]:
+    """db.connect() pointed at Aurora, and the seconds it took."""
     need("AURORA_HOST", "AURORA_USER")
-    rds = boto3.client("rds", region_name=config.AWS_REGION)
+    config.DB_TARGET = "aurora"
     start = time.perf_counter()
-    for attempt in range(1, CONNECT_ATTEMPTS + 1):
-        # Signed locally from the AWS credentials; no AWS call. Valid for 15 minutes.
-        token = rds.generate_db_auth_token(DBHostname=config.AURORA_HOST, Port=config.AURORA_PORT,
-                                           DBUsername=config.AURORA_USER, Region=config.AWS_REGION)
-        try:
-            conn = psycopg.connect(
-                host=config.AURORA_HOST, port=config.AURORA_PORT, user=config.AURORA_USER,
-                dbname=config.AURORA_DATABASE, password=token, sslmode="verify-full", sslrootcert=CA_BUNDLE,
-                connect_timeout=config.AURORA_CONNECT_TIMEOUT_S, autocommit=True,
-            )
-            return conn, time.perf_counter() - start
-        except psycopg.OperationalError as error:
-            print(f"  connect attempt {attempt} failed after {time.perf_counter() - start:.1f} s: {error}")
-            if attempt == CONNECT_ATTEMPTS:
-                raise
-    raise AssertionError("unreachable")
+    conn = db.connect()
+    return conn, time.perf_counter() - start
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
@@ -109,7 +85,7 @@ def db_checks(conn: psycopg.Connection) -> bool:
 
 def run_direct() -> bool:
     print("direct: psycopg + IAM token through the internet access gateway")
-    conn, seconds = connect_direct()
+    conn, seconds = connect_aurora()
     print(f"  connected in {seconds:.1f} s")
     schema = f"{db.TEST_SCHEMA_PREFIX}{uuid.uuid4().hex[:12]}"
     with conn:
@@ -129,74 +105,13 @@ def run_direct() -> bool:
     return ok
 
 
-@functools.cache
-def data_api_client():
-    need("AURORA_CLUSTER_ARN", "AURORA_SECRET_ARN")
-    return boto3.client("rds-data", region_name=config.AWS_REGION)
-
-
-def data_api(statement: str, **params: str) -> tuple[dict, float]:
-    """One Data API call, retried while a paused cluster resumes. Returns the answer and the seconds taken."""
-    client = data_api_client()
-    parameters = [{"name": name, "value": {"stringValue": value}} for name, value in params.items()]
-    start = time.perf_counter()
-    while True:
-        try:
-            answer = client.execute_statement(
-                resourceArn=config.AURORA_CLUSTER_ARN, secretArn=config.AURORA_SECRET_ARN,
-                database=config.AURORA_DATABASE, sql=statement, parameters=parameters,
-            )
-            return answer, time.perf_counter() - start
-        except client.exceptions.DatabaseResumingException:
-            waited = time.perf_counter() - start
-            if waited > DATA_API_WAIT_S:
-                raise
-            print(f"  cluster resuming ({waited:.0f} s), retrying in {DATA_API_RETRY_S} s")
-            time.sleep(DATA_API_RETRY_S)
-
-
-def field_value(field: dict):
-    """One Data API field, whatever its type key (stringValue, doubleValue, ...); None for a NULL."""
-    return None if field.get("isNull") else next(iter(field.values()))
-
-
-def first_value(answer: dict):
-    """The first column of the first row."""
-    return field_value(answer["records"][0][0])
-
-
-def run_data_api() -> bool:
-    print("data-api: RDS Data API with the Secrets Manager secret")
-    data_api_client()  # built before the timed calls
-    answer, seconds = data_api(db.DATA_API_SMOKE["server_info"])
-    version, pgvector = (field_value(field) for field in answer["records"][0])
-    print(f"  server: {version}  ({seconds:.1f} s)")
-    print(f"  pgvector: {pgvector}")
-    if not check("pgvector installed", pgvector is not None):
-        return False
-
-    ok = True
-    v, w = db.vector_text(unit_vector(0)), db.vector_text(unit_vector(1))
-    answer, seconds = data_api(db.DATA_API_SMOKE["distance"], v=v, w=w)
-    distance = float(first_value(answer))
-    ok &= check("1024-number distance", abs(distance - 1.0) < 1e-6, f"{distance:.3f}, {seconds:.2f} s")
-
-    answer, seconds = data_api(db.DATA_API_SMOKE["round_trip"], v=v)
-    back = [float(x) for x in first_value(answer).strip("[]").split(",")]
-    ok &= check("vector text round trip", back == unit_vector(0), f"{seconds:.2f} s")
-    return ok
-
-
-def run_resume(path: str) -> bool:
-    print(f"resume ({path}): run only after 10+ minutes with nothing connected")
+def run_resume() -> bool:
+    print("resume: run only after 10+ minutes with nothing connected")
     print("  check first: RDS > datasheet-rag instance > Monitoring > ServerlessDatabaseCapacity is 0")
     start = time.perf_counter()
-    if path == "direct":
-        conn, _ = connect_direct()
-        with conn:
-            db.server_info(conn)
-    else:
-        data_api(db.DATA_API_SMOKE["server_info"])
+    conn, _ = connect_aurora()
+    with conn:
+        db.server_info(conn)
     print(f"  first answer after {time.perf_counter() - start:.1f} s")
     return True
 
@@ -206,16 +121,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("direct")
-    sub.add_parser("data-api")
-    resume = sub.add_parser("resume")
-    resume.add_argument("--path", choices=("direct", "data-api"), required=True)
+    sub.add_parser("resume")
     args = parser.parse_args()
     if args.command == "direct":
         ok = run_direct()
-    elif args.command == "data-api":
-        ok = run_data_api()
     else:
-        ok = run_resume(args.path)
+        ok = run_resume()
     print("OK" if ok else "FAILED")
     sys.exit(0 if ok else 1)
 

@@ -6,6 +6,10 @@ One entry per working session, newest first. Each entry records the date, what w
 
 Next session (Cycle 2):
 
+- [x] 2026-10-17: step 2 Aurora test run approved and passed.
+- [ ] Open the step 2 PR (files listed at the end of Session 14) and merge it.
+- [ ] After the step 2 PR is merged, remove the Data API parts in the console: delete the secret `datasheet-rag/rag_data` ($0.40 a month); drop the role `rag_data` in CloudShell; run `aws rds disable-http-endpoint` on the cluster; remove the `rds-data:ExecuteStatement` and `secretsmanager:GetSecretValue` statements from `rag-aurora-smoke` (keep `rds-db:connect`).
+
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
 - [ ] Optional: check that the README and its screenshot look right on GitHub.
@@ -99,6 +103,41 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-17 — Session 14: Cycle 2 step 2 (data access layer), built
+
+- Claude explained the two ways to reach Aurora (direct IAM-token connection, Data API) and Postgres schemas (`public` vs the throwaway `test_...` schemas, `search_path`).
+- Step 2 plan approved by the human. Decision: **direct IAM-token connection, no Data API backend.** The Data API was needed only to keep Lambda out of a VPC, and the express cluster has no VPC. Single-agent build.
+- Built so far:
+  - `rag/config.py`: `DB_TARGET` (`local` by default, or `aurora`), `AURORA_CONNECT_ATTEMPTS` (3), `AURORA_CA_BUNDLE` (empty means botocore's `cacert.pem`). `AURORA_CLUSTER_ARN` and `AURORA_SECRET_ARN` removed; `.env.example` updated.
+  - `rag/db.py`: `connect()` picks the target. `_connect_aurora()` (moved from the smoke script) makes a fresh token, connects with `verify-full`, a 60 s timeout, and retries with a new token. An unknown target or an empty `AURORA_HOST` raises `ValueError`. `DATA_API_SMOKE` removed; `server_info` keeps its SQL.
+  - `scripts/aurora_smoke.py`: `direct` and `resume` use `db.connect()`; the `data-api` command is gone.
+  - `tests/test_db_connect.py`: 8 offline tests with fake `psycopg.connect` and `boto3`. The Data API statement test in `tests/test_db.py` was removed. 867 tests pass locally.
+- Aurora run, approved by the human:
+  - `DB_TARGET=aurora pytest tests/test_db.py tests/test_search.py`: 184 passed, none skipped, in 216 s.
+  - `aurora_smoke.py direct`: OK; connected in 0.7 s because the cluster was already awake from the tests.
+  - Afterwards: 0 test schemas left on Aurora, 0 tables in `public`.
+  - No Bedrock calls; only Aurora capacity time.
+- The human asked whether to be logged into the console as IAM or root for the run. Neither is needed: the code uses the dev IAM user's access key in `~\.aws\credentials`, not the browser session.
+- Problem (small): a one-line `python -c` check with SQL quotes failed in PowerShell. PowerShell read `count(*)` as a command because of the escaped quotes. Fix: ran it from Git Bash instead.
+- `CLAUDE.md` updated: Current status, the Cycle 2 database row of the design table, the repo layout, step 2 in the outline.
+- Code review done and recorded (1 of 2). 9 findings: 7 fixed, 2 reported.
+  - Fixed:
+    - a 5 s pause between connect attempts (`AURORA_RETRY_PAUSE_S`). Without it, a refused connection while the cluster wakes used up all 3 attempts in milliseconds;
+    - each failed attempt is logged as a warning, so a resume timing shows its retries;
+    - the RDS client is built once (`_rds_client`, cached);
+    - the connection is closed if setting the schema fails, because an open session would keep Aurora awake;
+    - the `conftest.py` skip guard also catches `ValueError` and botocore errors, and its message names the target;
+    - `CLAUDE.md` and `runs/aurora_smoke.md` no longer describe the removed commands;
+    - the Data API cleanup is on the checklist.
+  - Reported, not changed:
+    - The DB tests follow `DB_TARGET`. This is on purpose: it is how the tests ran on Aurora. A shell left with `DB_TARGET=aurora` runs them on Aurora too, which costs Aurora time, not Bedrock. Clear it with `Remove-Item Env:DB_TARGET`.
+    - The worst-case connect is 3 × 60 s, longer than API Gateway's 29 s. **For step 4:** the Lambda must set a lower timeout and fewer attempts.
+  - After the fixes: 869 tests pass locally, and `aurora_smoke.py direct` passes again on Aurora.
+- Files changed in step 2 (for the PR): `datasheet-rag/rag/config.py`, `datasheet-rag/rag/db.py`, `datasheet-rag/scripts/aurora_smoke.py`, `datasheet-rag/tests/test_db_connect.py` (new), `datasheet-rag/tests/test_db.py`, `datasheet-rag/tests/conftest.py`, `datasheet-rag/.env.example`, `datasheet-rag/runs/aurora_smoke.md`, `CLAUDE.md`, `progress.md`.
+- Still open:
+  - the PR by the human;
+  - the human's console cleanup of the Data API parts (see the checklist).
 
 ## 2026-10-16 — Session 13: Cycle 2 step 1 (Aurora smoke test), done
 
