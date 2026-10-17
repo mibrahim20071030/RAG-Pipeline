@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 2 (data access layer), in plan mode, when the human says so.
+- Next: Cycle 2 step 3 (load the data into Aurora), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -157,14 +157,33 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - Resume to the first answer took 18.8 s by the direct way and 17.6 s through the Data API (retried on `DatabaseResumingException`).
     - The local database is 134 MB, which fits the 1 GB limit.
   - Files:
-    - `scripts/aurora_smoke.py` (`direct`, `data-api`, `resume --path`);
-    - `rag/db.py` `server_info` and `DATA_API_SMOKE`;
+    - `scripts/aurora_smoke.py` (`direct`, `resume`; the `data-api` command was removed in step 2);
+    - `rag/db.py` `server_info` (`DATA_API_SMOKE` was removed in step 2);
     - the `AURORA_*` settings in `rag/config.py`.
   - Lambda supports `python3.14` (AL2023, until 2029-06-30), so no downgrade is needed.
   - TLS: connect with `sslmode=verify-full`. On Windows `sslrootcert=system` fails (OpenSSL's store is empty), so the script uses botocore's `cacert.pem`; choose the bundle for Lambda in step 2.
   - Code review done and recorded (1 of 2): 8 of 10 findings fixed (certificate check, search_path SQL moved to `db.use_schema`, one Data API client, empty `AURORA_PORT`, and smaller ones). 862 tests pass.
   - Recommendation for step 2 (to be decided in its plan): the **direct IAM-token connection** in `db.connect` instead of a Data API backend. After that the human deletes the secret, the `rag_data` role and the Data API endpoint.
   - The cluster stays paused for steps 2 and 3.
+- Cycle 2 step 2 (data access layer): BUILT on 2026-10-17 (single agent), waiting for the human's PR. Decision: **direct IAM-token connection, no Data API backend.**
+  - `config.DB_TARGET` (`local` by default, or `aurora`; set it in the shell, `.env` values lose to the environment) picks the database. `db.connect()` stays the only way in, so every caller works on both.
+  - The Aurora path, `db._connect_aurora()`:
+    - makes a fresh token with `generate_db_auth_token`;
+    - connects with `sslmode=verify-full` and `sslrootcert` = `AURORA_CA_BUNDLE` (empty means botocore's `cacert.pem`, which is in the Lambda runtime too);
+    - has a 60 s timeout and tries `AURORA_CONNECT_ATTEMPTS` (3) times, each with a new token.
+  - `boto3` is imported only on that path.
+  - Removed: `DATA_API_SMOKE`, the `data-api` smoke command, `AURORA_CLUSTER_ARN` and `AURORA_SECRET_ARN`.
+  - Tests: `tests/test_db_connect.py` (8, offline, fakes for psycopg and boto3). 867 tests pass locally.
+  - With `DB_TARGET=aurora`, `tests/test_db.py` and `tests/test_search.py` passed on Aurora: 184 tests in 216 s, each in its own throwaway schema. None were left behind, and `public` on Aurora is still empty for step 3.
+  - `scripts/aurora_smoke.py direct` passed through `db.connect()`.
+  - Code review done and recorded (1 of 2). 7 of 9 findings fixed: a 5 s pause between attempts (`AURORA_RETRY_PAUSE_S`), a warning logged per failed attempt, a cached RDS client, the connection closed if setting the schema fails, and a wider skip guard in `conftest.py`. 869 tests pass.
+  - The DB tests follow `DB_TARGET` on purpose, so a shell left with `DB_TARGET=aurora` runs them on Aurora.
+  - **For step 4:** the worst-case connect is 3 × 60 s, far past API Gateway's 29 s. The Lambda must use a shorter timeout and fewer attempts.
+  - After the merge, the human removes the Data API parts:
+    - the secret `datasheet-rag/rag_data`;
+    - the `rag_data` role;
+    - the endpoint (`aws rds disable-http-endpoint`);
+    - the two Data API statements in `rag-aurora-smoke`.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -242,7 +261,7 @@ Rules for the agents (also written into each definition):
 | Answer LLM | Amazon Nova Lite (in-region, no cross-Region profile needed) | Low cost, works inside the Free plan limits. Claude Haiku 5.5 is an optional comparison only if the account allows cross-Region inference profiles (VERIFY). |
 | RAGAS judge LLM | Amazon Nova Pro (in-region in us-east-1) as the default. Check price first. | A stronger model than the generator. VERIFY price before any RAGAS run. |
 | Database, Cycle 1 | Postgres with pgvector in Docker on the local machine | Free. |
-| Database, Cycle 2 | Aurora PostgreSQL Serverless v2, minimum capacity 0 ACU (auto-pause), accessed through the RDS Data API | No compute cost when paused. Lambda does not need to sit in a VPC, so no NAT gateway or VPC endpoint charges. Fallback: RDS PostgreSQL db.t4g.micro (always on, about $12 per month). |
+| Database, Cycle 2 | Aurora PostgreSQL Serverless v2 (express configuration), minimum capacity 0 ACU (auto-pause), reached directly with psycopg and an IAM token (changed from the Data API at step 2, 2026-10-17) | No compute cost when paused. An express cluster has no VPC, so Lambda connects over the internet gateway without NAT or VPC endpoint charges, and `rag/db.py` runs unchanged. Fallback: RDS PostgreSQL db.t4g.micro (always on, about $12 per month). |
 | Page number stored | PDF page position (1-based index in the file) as `page`. Printed label stored separately as `page_label` when parsable. | A user can open the PDF at that page. Citations use `page`. |
 | Section headings | Stored best effort in `section`. Prepending document name and section to the embedded text is an experiment (on vs off). | Gives a chunk context. Measured, not assumed. |
 | Keyword search | Postgres full-text search with an OR-joined tsquery built by our own function. Test the `english` and `simple` configurations. | `plainto_tsquery` requires every word to match, so long questions return nothing. English stemming may damage part numbers. |
@@ -280,7 +299,7 @@ Cycle 1 runs everything locally behind a script and a small local server. Cycle 
 ```
 rag/
   config.py        # region, model IDs, N, k, chunking settings
-  db.py            # all SQL; one interface, two backends (psycopg local, Data API in Cycle 2)
+  db.py            # all SQL; psycopg, two targets (local Docker, Aurora with IAM token), DB_TARGET picks
   parse.py         # PDF -> pages, text, tables
   chunk.py         # chunking strategies
   embed.py         # Titan V2 calls
@@ -477,7 +496,7 @@ CREATE TABLE rerank_cache (
 Order of work, each with a test written when the step starts:
 
 1. **Aurora smoke test (first step). DONE 2026-10-16, see Current status.** Original plan: create an Aurora PostgreSQL Serverless v2 cluster on the Free plan with minimum capacity 0 ACU. Enable the Data API. Run `CREATE EXTENSION vector`. If pgvector, minimum 0 ACU, or the Data API do not work on this account, switch to the RDS db.t4g.micro fallback and note the cost.
-2. **Data access layer.** Add the Data API backend to `rag/db.py`. The same query tests from Layer 4 must pass against both backends. Check the Data API response size limit and parameter handling for vectors (VERIFY).
+2. **Data access layer. BUILT 2026-10-17, see Current status.** `db.connect()` reaches Aurora directly with an IAM token (`DB_TARGET=aurora`); no Data API backend. The Layer 3 and 4 database tests pass on both targets.
 3. **Load the data.** Load chunks and vectors into Aurora, using batch statements. Confirm row counts and vector dimensions.
 4. **Lambda.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
 5. **API Gateway.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.

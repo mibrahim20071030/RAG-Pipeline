@@ -1,5 +1,7 @@
 # Cycle 2 step 1: Aurora smoke test (2026-10-16)
 
+> Update, step 2 (2026-10-17): the direct connection was chosen. The `data-api` command and `resume --path` were removed from the script. It now has `direct` and `resume`, both through `db.connect()` with `DB_TARGET=aurora`.
+
 Result: **passed.** Aurora PostgreSQL Serverless works for this project on the Free plan. pgvector, pausing at 0 ACU, and access from outside a VPC all work. Both ways of reaching the database (a direct connection and the Data API) worked. The recommendation for step 2 is the direct connection.
 
 ## Setup

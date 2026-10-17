@@ -3,7 +3,6 @@
 Everything runs in a throwaway schema (the `conn` fixture in conftest.py) with a fake embedder, so the real
 rows are never touched and no test calls AWS.
 """
-import re
 
 import psycopg
 import pytest
@@ -46,14 +45,6 @@ def test_server_info_reports_pgvector(conn):
     info = db.server_info(conn)
     assert info["version"].startswith("PostgreSQL")
     assert info["pgvector"]
-
-
-@pytest.mark.parametrize("name", sorted(db.DATA_API_SMOKE))
-def test_data_api_smoke_statements_run_with_named_parameters(conn, name):
-    """The Data API takes `:name` parameters; here they are swapped for psycopg's form to run the same SQL."""
-    statement = re.sub(r"(?<!:):(\w+)", lambda m: f"%({m.group(1)})s", db.DATA_API_SMOKE[name])
-    row = conn.execute(statement, {"v": "[1,2,3]", "w": "[1,2,4]"}).fetchone()
-    assert row[0] is not None
 
 
 def test_load_stores_every_chunk_with_a_1024_vector(conn):

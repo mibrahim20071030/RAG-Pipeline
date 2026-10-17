@@ -1,12 +1,20 @@
-"""All SQL of the project. Cycle 1 backend: psycopg against the local Postgres with pgvector.
+"""All SQL of the project, run with psycopg against Postgres with pgvector.
 
-Every function takes a connection from `connect()`. A vector goes in as the text `[0.1,0.2,...]` cast to
+Every function takes a connection from `connect()`, which reaches the local Docker Postgres or Aurora
+(`config.DB_TARGET`). The SQL is the same for both. A vector goes in as the text `[0.1,0.2,...]` cast to
 `vector`, and comes back out as the same text, so no extra package is needed.
 """
+import functools
+import logging
+import time
+from pathlib import Path
+
 import psycopg
 from psycopg import sql
 
 from rag import config
+
+_log = logging.getLogger(__name__)
 
 TEST_SCHEMA_PREFIX = "test_"
 
@@ -57,17 +65,72 @@ CREATE TABLE IF NOT EXISTS rerank_cache (
 
 
 def connect(schema: str | None = None) -> psycopg.Connection:
-    """A connection to the local database. Each statement commits on its own unless inside `conn.transaction()`.
+    """A connection to the database named by `config.DB_TARGET` ("local" or "aurora").
 
-    `schema` puts that schema first on the search path, so the tables are created and read there (used by tests).
+    Each statement commits on its own unless inside `conn.transaction()`. `schema` puts that schema first on the
+    search path, so the tables are created and read there (used by tests).
     """
-    conn = psycopg.connect(
-        host=config.PG_HOST, port=config.PG_PORT, user=config.PG_USER, dbname=config.PG_DATABASE,
-        password=config.PG_PASSWORD, connect_timeout=5, autocommit=True,
-    )
+    if config.DB_TARGET == "local":
+        conn = psycopg.connect(
+            host=config.PG_HOST, port=config.PG_PORT, user=config.PG_USER, dbname=config.PG_DATABASE,
+            password=config.PG_PASSWORD, connect_timeout=5, autocommit=True,
+        )
+    elif config.DB_TARGET == "aurora":
+        conn = _connect_aurora()
+    else:
+        raise ValueError(f"DB_TARGET must be 'local' or 'aurora', not {config.DB_TARGET!r}")
     if schema is not None:
-        use_schema(conn, schema)
+        try:
+            use_schema(conn, schema)
+        except BaseException:
+            conn.close()  # an open session would keep Aurora from pausing
+            raise
     return conn
+
+
+@functools.cache
+def _rds_client():
+    import boto3
+
+    return boto3.client("rds", region_name=config.AWS_REGION)
+
+
+def _ca_bundle() -> str:
+    if config.AURORA_CA_BUNDLE:
+        return config.AURORA_CA_BUNDLE
+    import botocore
+
+    return str(Path(botocore.__file__).parent / "cacert.pem")
+
+
+def _connect_aurora() -> psycopg.Connection:
+    """A connection through the internet access gateway, logged in with a fresh IAM token.
+
+    The token (15 minutes) is needed only to log in; an open connection outlives it. The certificate is checked
+    (`verify-full`), so a fake server cannot collect the token. A paused cluster takes about 18 s to answer, which
+    the timeout covers; a failed attempt is logged and retried with a new token after a short pause.
+    """
+    if not config.AURORA_HOST:
+        raise ValueError("DB_TARGET is 'aurora' but AURORA_HOST is empty (see datasheet-rag/.env.example)")
+    rds = _rds_client()
+    start = time.perf_counter()
+    for attempt in range(1, config.AURORA_CONNECT_ATTEMPTS + 1):
+        # Signed locally from the AWS credentials; no AWS call.
+        token = rds.generate_db_auth_token(DBHostname=config.AURORA_HOST, Port=config.AURORA_PORT,
+                                           DBUsername=config.AURORA_USER, Region=config.AWS_REGION)
+        try:
+            return psycopg.connect(
+                host=config.AURORA_HOST, port=config.AURORA_PORT, user=config.AURORA_USER,
+                dbname=config.AURORA_DATABASE, password=token, sslmode="verify-full", sslrootcert=_ca_bundle(),
+                connect_timeout=config.AURORA_CONNECT_TIMEOUT_S, autocommit=True,
+            )
+        except psycopg.OperationalError as error:
+            _log.warning("Aurora connect attempt %d failed after %.1f s: %s", attempt,
+                         time.perf_counter() - start, error)
+            if attempt == config.AURORA_CONNECT_ATTEMPTS:
+                raise
+            time.sleep(config.AURORA_RETRY_PAUSE_S)
+    raise AssertionError("unreachable")
 
 
 def use_schema(conn: psycopg.Connection, schema: str) -> None:
@@ -386,14 +449,7 @@ def drop_test_schema(conn: psycopg.Connection, name: str) -> None:
 
 def server_info(conn: psycopg.Connection) -> dict:
     """The server version string and the installed pgvector version (None when the extension is missing)."""
-    row = conn.execute(DATA_API_SMOKE["server_info"]).fetchone()
+    row = conn.execute(
+        "SELECT version(), (SELECT extversion FROM pg_extension WHERE extname = 'vector')"
+    ).fetchone()
     return {"version": row[0], "pgvector": row[1]}
-
-
-# Statements the Aurora smoke test sends through the RDS Data API (Cycle 2 step 1). Vectors travel as text
-# parameters and come back as text or as a distance, because the Data API has no vector type.
-DATA_API_SMOKE = {
-    "server_info": "SELECT version(), (SELECT extversion FROM pg_extension WHERE extname = 'vector')",
-    "distance": "SELECT CAST(:v AS vector) <=> CAST(:w AS vector)",
-    "round_trip": "SELECT CAST(CAST(:v AS vector) AS text)",
-}
