@@ -165,7 +165,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Code review done and recorded (1 of 2): 8 of 10 findings fixed (certificate check, search_path SQL moved to `db.use_schema`, one Data API client, empty `AURORA_PORT`, and smaller ones). 862 tests pass.
   - Recommendation for step 2 (to be decided in its plan): the **direct IAM-token connection** in `db.connect` instead of a Data API backend. After that the human deletes the secret, the `rag_data` role and the Data API endpoint.
   - The cluster stays paused for steps 2 and 3.
-- Cycle 2 step 2 (data access layer): BUILT on 2026-10-17 (single agent), waiting for the human's PR. Decision: **direct IAM-token connection, no Data API backend.**
+- Cycle 2 step 2 (data access layer): DONE on 2026-10-17 (single agent). Decision: **direct IAM-token connection, no Data API backend.**
   - `config.DB_TARGET` (`local` by default, or `aurora`; set it in the shell, `.env` values lose to the environment) picks the database. `db.connect()` stays the only way in, so every caller works on both.
   - The Aurora path, `db._connect_aurora()`:
     - makes a fresh token with `generate_db_auth_token`;
@@ -179,11 +179,14 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Code review done and recorded (1 of 2). 7 of 9 findings fixed: a 5 s pause between attempts (`AURORA_RETRY_PAUSE_S`), a warning logged per failed attempt, a cached RDS client, the connection closed if setting the schema fails, and a wider skip guard in `conftest.py`. 869 tests pass.
   - The DB tests follow `DB_TARGET` on purpose, so a shell left with `DB_TARGET=aurora` runs them on Aurora.
   - **For step 4:** the worst-case connect is 3 × 60 s, far past API Gateway's 29 s. The Lambda must use a shorter timeout and fewer attempts.
-  - After the merge, the human removes the Data API parts:
-    - the secret `datasheet-rag/rag_data`;
-    - the `rag_data` role;
-    - the endpoint (`aws rds disable-http-endpoint`);
-    - the two Data API statements in `rag-aurora-smoke`.
+  - Merged as PR #13 (`bc7d476`).
+  - Data API cleanup done by the human on 2026-10-17:
+    - endpoint disabled (`HttpEndpointEnabled: false`);
+    - role `rag_data` dropped;
+    - secret `datasheet-rag/rag_data` deleted;
+    - `rag-aurora-smoke` now holds only `rds-db:connect` for `rag_app`.
+  - Gotcha found while dropping the role: on Aurora, `postgres` is `rds_superuser`, not a superuser. In PG16+, `DROP OWNED BY` needs membership of the role, so run `GRANT <role> TO postgres;` first.
+  - `aurora_smoke.py direct` passed after the cleanup.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -515,7 +518,7 @@ Order of work, each with a test written when the step starts:
 - Delete the API Gateway API and the Lambda function and its role.
 - Empty and delete the S3 buckets (page and PDFs).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
-- Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots and the Secrets Manager secret `datasheet-rag/rag_data`.
+- Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)
 - Remove the inline policy `rag-aurora-smoke` from the dev IAM user (if the user itself is not deleted first).
 - Delete the IAM user and its access keys.
 - Check CloudWatch log groups, and delete them.

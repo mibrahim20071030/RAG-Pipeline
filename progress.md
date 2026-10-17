@@ -7,8 +7,9 @@ One entry per working session, newest first. Each entry records the date, what w
 Next session (Cycle 2):
 
 - [x] 2026-10-17: step 2 Aurora test run approved and passed.
-- [ ] Open the step 2 PR (files listed at the end of Session 14) and merge it.
-- [ ] After the step 2 PR is merged, remove the Data API parts in the console: delete the secret `datasheet-rag/rag_data` ($0.40 a month); drop the role `rag_data` in CloudShell; run `aws rds disable-http-endpoint` on the cluster; remove the `rds-data:ExecuteStatement` and `secretsmanager:GetSecretValue` statements from `rag-aurora-smoke` (keep `rds-db:connect`).
+- [x] 2026-10-17: step 2 PR merged (#13, `bc7d476`).
+- [x] 2026-10-17: Data API parts removed in the console: endpoint disabled, role `rag_data` dropped, secret deleted, `rag-aurora-smoke` trimmed to `rds-db:connect`; the two ARN lines removed from `.env`.
+- [ ] Say when to start Cycle 2 step 3 (load the data into Aurora), in plan mode.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
@@ -66,7 +67,7 @@ Full detail for every item is in `CLAUDE.md`. A layer is finished only when its 
 
 Start of next session:
 
-1. Cycle 2 step 1 is done (PR #12). Step 2 (data access layer) starts only when the human says so, in plan mode. Its plan decides direct IAM-token connection vs Data API (recommended: direct), and with it the cleanup of the secret, the `rag_data` role and the Data API endpoint.
+1. Cycle 2 steps 1 and 2 are done (PR #12, PR #13), and the Data API parts are removed. Step 3 (load the data into Aurora) starts only when the human says so, in plan mode. `db.connect()` reaches Aurora with `DB_TARGET=aurora`; the vectors can be copied from the local `embedding_cache`, so no new Titan calls are needed.
 2. Read "Open for Cycle 2" in `datasheet-rag/runs/cycle1_summary.md` first. It covers:
    - the reranker's limit of 3 calls a minute for a public demo (throttle, or serve without it: R@5 0.953, MRR 0.834);
    - the caches that need write access;
@@ -136,7 +137,16 @@ Cycle 2 (deploy, UI, report):
   - After the fixes: 869 tests pass locally, and `aurora_smoke.py direct` passes again on Aurora.
 - Files changed in step 2 (for the PR): `datasheet-rag/rag/config.py`, `datasheet-rag/rag/db.py`, `datasheet-rag/scripts/aurora_smoke.py`, `datasheet-rag/tests/test_db_connect.py` (new), `datasheet-rag/tests/test_db.py`, `datasheet-rag/tests/conftest.py`, `datasheet-rag/.env.example`, `datasheet-rag/runs/aurora_smoke.md`, `CLAUDE.md`, `progress.md`.
 - Still open:
-  - the PR by the human;
+  - ~~the PR by the human~~ merged as PR #13 (`bc7d476`);
+- After the merge, the human removed the Data API parts in the console:
+  - the endpoint is disabled;
+  - the role `rag_data` is dropped;
+  - the secret is deleted;
+  - `rag-aurora-smoke` keeps only `rds-db:connect`.
+  - Claude re-ran `aurora_smoke.py direct`: OK.
+- Problems while dropping the role:
+  1. The login lines were pasted into an open `psql` session, so psql read them as SQL. The `$(` left a bracket open (prompt `postgres(>`), and nothing ran. Fix: Ctrl+C, then only the SQL.
+  2. `DROP OWNED BY rag_data` was refused ("permission denied to drop objects"). Why: on Aurora `postgres` is `rds_superuser`, not a superuser, and PG16+ requires membership of the role. Fix: `GRANT rag_data TO postgres;` first.
   - the human's console cleanup of the Data API parts (see the checklist).
 
 ## 2026-10-16 — Session 13: Cycle 2 step 1 (Aurora smoke test), done
