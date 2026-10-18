@@ -37,7 +37,7 @@ Next session (Cycle 2):
 - [x] 2026-10-18: the three step 7 runs done (101 asks, $0.1211).
 - [x] 2026-10-18: Aurora's `ServerlessDatabaseCapacity` read for 15:00–17:00 UTC (1.619 ACU-hours).
 - [ ] Optional: after a night with no calls, tell Claude so it can run one long-idle cold trial ($0.0003).
-- [ ] Open the PR for step 7 and merge it.
+- [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [ ] Next session, first: decide how to close the cost risk (anyone can keep Aurora awake; options in `CLAUDE.md`, step 7).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
@@ -131,7 +131,7 @@ Cycle 2 (deploy, UI, report):
 - [x] 4. Lambda. Done on 2026-10-17 (`runs/lambda_deploy.md`); PR #15 merged.
 - [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
 - [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
-- [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); the PR is still to do.
+- [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); PR #18 merged.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
@@ -165,7 +165,7 @@ Cycle 2 (deploy, UI, report):
   - None of them changed this run's numbers. 979 tests pass.
 - `runs/deployed_eval.md` written. CLAUDE.md status updated.
 - The human read Aurora's `ServerlessDatabaseCapacity` in CloudWatch for 15:00–17:00 UTC: 0.463 and 1.155 ACU averages, so 1.619 ACU-hours, $0.194, or $0.0019 per ask. At demo traffic Aurora costs about as much as Bedrock, because each wake-up keeps it awake for at least 5 minutes. Total per question: $0.0041 new, $0.0022 cached. `summary --aurora-acu-hours 1.6186` written.
-- Step 7 is done. Open: an optional long-idle trial, and the human's PR.
+- Step 7 is done and merged as PR #18 (`d41d176`). Open: an optional long-idle trial.
 - **Cost risk found while discussing the results (to address first next session, the human's choice).** Anyone can keep Aurora awake:
   - every API request connects to it, even an empty question, because `handler.py` connects before the question is checked;
   - the daily cap is counted in Aurora, so it cannot prevent this.

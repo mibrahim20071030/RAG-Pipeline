@@ -230,7 +230,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `web/index.html`: reads API Gateway's `{"message"}` bodies; a daily-limit 429 has no retry button; a 5xx or a body that is not JSON (CloudFront's HTML error pages) gives a "busy or waking up" message; the datasheet list shows "Loading datasheets…".
   - `scripts/call_api.py --base site` sends every command to `SITE_URL` (in `.env`), and the new command `page` checks the page and the http→https redirect.
   - 721 tests pass without Docker (207 skipped). `build/lambda.zip` rebuilt (22,687,005 bytes).
-- Cycle 2 step 7 (Deployed evaluation): DONE on 2026-10-18 (single agent), waiting for the human's PR. Results are in `datasheet-rag/runs/deployed_eval.md` and `runs/results_deployed.csv`; per-question rows are in `runs/deployed/` (`first.csv`, `cached.csv`, `cold.csv`).
+- Cycle 2 step 7 (Deployed evaluation): DONE on 2026-10-18 (single agent), merged as PR #18 (`d41d176`). Results are in `datasheet-rag/runs/deployed_eval.md` and `runs/results_deployed.csv`; per-question rows are in `runs/deployed/` (`first.csv`, `cached.csv`, `cold.csv`).
   - `rag/eval/deployed_eval.py`, run as `python -m rag.eval.deployed_eval`. Commands:
     - `plan`: free, but it wakes Aurora;
     - `run --pass first|cached`: paid; it prints the plan and needs `--yes` or a yes;
