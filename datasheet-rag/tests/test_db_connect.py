@@ -143,3 +143,22 @@ def test_the_connection_is_closed_when_the_schema_cannot_be_set(aurora, calls, m
     with pytest.raises(psycopg.OperationalError):
         db.connect("test_abc")
     assert calls.conns[0].closed
+
+
+def test_target_aurora_overrides_a_local_db_target(aurora, calls, monkeypatch):
+    monkeypatch.setattr(config, "DB_TARGET", "local")
+    db.connect(target="aurora")
+    assert calls.connects[0]["host"] == config.AURORA_HOST
+    assert len(calls.rds.token_requests) == 1
+
+
+def test_target_local_overrides_an_aurora_db_target(aurora, calls):
+    db.connect(target="local")
+    assert calls.connects[0]["host"] == config.PG_HOST
+    assert calls.rds.token_requests == []
+
+
+def test_an_unknown_target_argument_is_refused(calls):
+    with pytest.raises(ValueError, match="'Aurora'"):
+        db.connect(target="Aurora")
+    assert calls.connects == []
