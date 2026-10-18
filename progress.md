@@ -17,7 +17,7 @@ Next session (Cycle 2):
 - [x] 2026-10-17: Cycle 2 step 4 console work done (concurrency quota 10, so no reserved concurrency).
 - [x] 2026-10-17: zip re-uploaded; the deployed tests passed ($0.0026).
 - [x] 2026-10-17: zip re-uploaded and the Bedrock timeout variables added; the re-test passed.
-- [ ] Open the PR for Cycle 2 step 4 and merge it.
+- [x] 2026-10-17: step 4 PR merged (#15, `3802ca5`).
 - [ ] Say when to start Cycle 2 step 5 (API Gateway), in plan mode.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
@@ -141,7 +141,8 @@ Cycle 2 (deploy, UI, report):
   - the two `{"cost": ...}` lines are in CloudWatch.
 
   Step 4 spend in total: $0.0029. A first CloudWatch filter returned nothing because the lines were not searchable yet; reading the log group a little later showed them.
-- Open: the human's PR for Cycle 2 step 4.
+- Merged by the human as PR #15 (`3802ca5`).
+- Open: Cycle 2 step 5 (API Gateway), in plan mode, when the human says so.
 
 ## 2026-10-17 — Session 15: Cycle 2 step 3 (load the data into Aurora), code built
 
