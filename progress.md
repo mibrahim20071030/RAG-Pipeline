@@ -33,7 +33,12 @@ Next session (Cycle 2):
 - [x] 2026-10-18: option A `index.html` uploaded (14:55:50 UTC) and invalidated; Claude checked that the page CloudFront serves is byte for byte the local file.
 - [x] 2026-10-18: Docker started; the full tests pass (932).
 - [x] 2026-10-18: step 6 PR merged (#17, `a811170`).
-- [ ] Say when to start Cycle 2 step 7 (Deployed evaluation), in plan mode.
+- [x] 2026-10-18: Cycle 2 step 7 plan approved; the three paid runs approved (about $0.12).
+- [x] 2026-10-18: the three step 7 runs done (101 asks, $0.1211).
+- [x] 2026-10-18: Aurora's `ServerlessDatabaseCapacity` read for 15:00–17:00 UTC (1.619 ACU-hours).
+- [ ] Optional: after a night with no calls, tell Claude so it can run one long-idle cold trial ($0.0003).
+- [ ] Open the PR for step 7 and merge it.
+- [ ] Next session, first: decide how to close the cost risk (anyone can keep Aurora awake; options in `CLAUDE.md`, step 7).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
@@ -126,10 +131,47 @@ Cycle 2 (deploy, UI, report):
 - [x] 4. Lambda. Done on 2026-10-17 (`runs/lambda_deploy.md`); PR #15 merged.
 - [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
 - [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
-- [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
+- [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); the PR is still to do.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-18 — Session 19: Cycle 2 step 7 (Deployed evaluation), in progress
+
+- Plan approved (single agent). Three runs through `SITE_URL`: `first` (49 questions; rerank scores not yet in Aurora), `cached` (the same 49 again), `cold` (3 trials, 10 minutes idle before each, q01). The long-idle trial (a night idle) is optional, for the human. Retrieval recall is not re-measured: the API returns only the cited sources, and step 3 showed the same candidates on both databases.
+- Built: `rag/eval/deployed_eval.py` (`plan`, `run`, `cold`, `logs`, `summary`), `tests/test_deployed_eval.py` (36, offline), and the `DEPLOYED_*`, `LAMBDA_*`, `HTTP_API_*` and `AURORA_USD_PER_ACU_HOUR` settings in `rag/config.py`. 968 tests pass.
+  - Questions go 21 s apart. A 429, a gateway 503/504 or no answer waits 60 s and retries, at most 3 times. The daily-limit 429 stops the run. Rows are appended as answers arrive, and a re-run skips the questions already answered.
+  - `logs` reads `/aws/lambda/datasheet-rag` with the dev user's `logs:FilterLogEvents`. It groups lines from START to REPORT per stream and matches each request to a row by time. A match is checked by equal `timings_ms`, so no redeploy was needed to add request ids.
+- Prices checked on the AWS pricing pages today (us-east-1): Lambda x86 $0.0000166667 per GB-s and $0.20 per 1M requests; HTTP API $1.00 per 1M; Aurora Serverless v2 $0.12 per ACU-hour (Standard; express configuration is not priced separately on the page).
+- Dry run (free, cost log unchanged): 0 embeds, 47 rerank calls (2 questions were cached from earlier steps), 49 answers, $0.107, 17 minutes; the daily cap was at 3 of 300.
+- The human approved all three runs (about $0.12, about 65 minutes). All three ran from 15:46 to 16:52 UTC: 101 asks, all 200, no retries. Spend: first $0.1071 (same as the estimate), cached $0.0131, cold $0.0009.
+- `logs` matched 101 of 101 rows to a Lambda request with equal timings. The first read missed the last cold trial, because CloudWatch had not stored its lines a minute after the call; a second read matched it.
+- Bug found in `summary` and fixed: the three cold trials ask the same question, and keeping the last row per id counted them as one. Cold rows are now all kept, and a test covers it.
+- Results so far (`runs/results_deployed.csv`):
+  - citation hit 0.930 first / 0.953 cached (local 0.930); answerable refused 2 of 43 (q24, q33, as locally); unanswerable refused 6 of 6 (local 5 of 6: q44's reworded refusal is now the fixed sentence).
+  - Per question, client p50 1.09 s (first, real rerank 259 ms) and 0.83 s (cached).
+  - Cold, after 10 minutes idle: 21.1–21.7 s, all 200. Aurora resume 17.3–18.1 s and Lambda init about 1.2 s, under API Gateway's 30 s.
+  - Model cost per query $0.00219 new and $0.00027 cached; Lambda $0.000009 warm and $0.00017 cold (it is billed while it waits for Aurora); HTTP API $0.000001.
+- Differences from the local answers: q22 now cites the right page (51); q25 lost page 19 in the first pass and has it back in the cached one; q30 has one extra citation. The first and cached passes had the same rerank scores and still differ on q25 and q30, so Nova Lite is not fully repeatable at temperature 0.
+- Code review done and recorded (1 of 2), 8 of 10 fixed:
+  - pacing after a retry;
+  - `IncompleteRead`;
+  - the daily cap read from config and checked before a run;
+  - the local invalid labels;
+  - one read of the pass file;
+  - one sort of the Lambda requests;
+  - 0 attempts;
+  - a warning for retried questions.
+  - None of them changed this run's numbers. 979 tests pass.
+- `runs/deployed_eval.md` written. CLAUDE.md status updated.
+- The human read Aurora's `ServerlessDatabaseCapacity` in CloudWatch for 15:00–17:00 UTC: 0.463 and 1.155 ACU averages, so 1.619 ACU-hours, $0.194, or $0.0019 per ask. At demo traffic Aurora costs about as much as Bedrock, because each wake-up keeps it awake for at least 5 minutes. Total per question: $0.0041 new, $0.0022 cached. `summary --aurora-acu-hours 1.6186` written.
+- Step 7 is done. Open: an optional long-idle trial, and the human's PR.
+- **Cost risk found while discussing the results (to address first next session, the human's choice).** Anyone can keep Aurora awake:
+  - every API request connects to it, even an empty question, because `handler.py` connects before the question is checked;
+  - the daily cap is counted in Aurora, so it cannot prevent this.
+  - Bound: about $1.50–3 a day realistically and $11.52 a day at most (the 4 ACU limit), plus about $0.70 a day of capped questions. It can be stopped in the console within a minute.
+  - Options (in `CLAUDE.md`, step 7): check the question before connecting; remove `/api/documents`; move the daily counter out of Aurora; pause the demo (route throttles to 0, VERIFY, or delete the `$default` stage); tear down.
+- Claude explained to the human what an API Gateway stage is. Deleting `$default` stops every request before Lambda, but loses the stage's throttling and access-log settings. Throttles at 0 are easier to undo.
 
 ## 2026-10-18 — Session 18: Cycle 2 step 6 (Frontend), code built, waiting for the console work
 

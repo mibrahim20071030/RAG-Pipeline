@@ -147,6 +147,25 @@ RAGAS_DIR = RUNS_DIR / "ragas"  # per-answer judge scores, one CSV per experimen
 RAGAS_RESULTS = RUNS_DIR / "results_ragas.csv"  # one summary row per experiment
 RAGAS_SHORTLIST = ("gen_prefix_k10", "gen_prefix_k5", "gen_detect_part", "gen_baseline")
 
+# Deployed evaluation (Cycle 2 step 7): the frozen questions sent to the live site, timed and costed.
+DEPLOYED_DIR = RUNS_DIR / "deployed"  # one CSV per pass (first, cached) and cold.csv
+RESULTS_DEPLOYED = RUNS_DIR / "results_deployed.csv"
+DEPLOYED_LOCAL_REFERENCE = "gen_prefix_k10"  # the local run of the frozen setup, compared answer by answer
+DEPLOYED_PACE_S = 21  # seconds between questions: Rerank allows 3 a minute and /api/ask is throttled to 1 per 20 s
+DEPLOYED_RETRY_WAIT_S = 60  # wait after a 429 or a gateway 503/504 before the same question is sent again
+DEPLOYED_MAX_ATTEMPTS = 4  # one send plus 3 retries
+DEPLOYED_TIMEOUT_S = 40  # client timeout; API Gateway gives up at 30 s
+DEPLOYED_DAILY_LIMIT = 300  # API_DAILY_ASK_LIMIT as set in the Lambda (locally it is 0, off)
+LAMBDA_FUNCTION = "datasheet-rag"
+LAMBDA_MEMORY_MB = 512
+# Prices for us-east-1, checked on the AWS pricing pages on 2026-10-18 (all inside the Free plan credits here):
+# Lambda x86 $0.0000166667 per GB-second and $0.20 per 1M requests; HTTP API $1.00 per 1M requests (first 300M);
+# Aurora Serverless v2 $0.12 per ACU-hour (Aurora Standard; the page does not price express configuration separately).
+LAMBDA_USD_PER_GB_S = 0.0000166667
+LAMBDA_USD_PER_REQUEST = 0.20 / 1_000_000
+HTTP_API_USD_PER_REQUEST = 1.00 / 1_000_000
+AURORA_USD_PER_ACU_HOUR = 0.12
+
 # Local web UI (Layer 8b): `python -m rag.server` serves web/index.html and the JSON API on this machine only.
 WEB_DIR = ROOT / "web"
 SERVER_HOST = "127.0.0.1"  # never 0.0.0.0: anyone who can reach the server can spend on the AWS account

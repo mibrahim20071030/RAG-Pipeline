@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 7 (Deployed evaluation), in plan mode, when the human says so.
+- Next: first the open cost risk under step 7 (Aurora can be kept awake by anyone), then Cycle 2 step 8 (Knowledge Base comparison), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -230,6 +230,39 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `web/index.html`: reads API Gateway's `{"message"}` bodies; a daily-limit 429 has no retry button; a 5xx or a body that is not JSON (CloudFront's HTML error pages) gives a "busy or waking up" message; the datasheet list shows "Loading datasheets…".
   - `scripts/call_api.py --base site` sends every command to `SITE_URL` (in `.env`), and the new command `page` checks the page and the http→https redirect.
   - 721 tests pass without Docker (207 skipped). `build/lambda.zip` rebuilt (22,687,005 bytes).
+- Cycle 2 step 7 (Deployed evaluation): DONE on 2026-10-18 (single agent), waiting for the human's PR. Results are in `datasheet-rag/runs/deployed_eval.md` and `runs/results_deployed.csv`; per-question rows are in `runs/deployed/` (`first.csv`, `cached.csv`, `cold.csv`).
+  - `rag/eval/deployed_eval.py`, run as `python -m rag.eval.deployed_eval`. Commands:
+    - `plan`: free, but it wakes Aurora;
+    - `run --pass first|cached`: paid; it prints the plan and needs `--yes` or a yes;
+    - `cold --trials --idle-minutes`;
+    - `logs`: CloudWatch with the dev user's `logs:FilterLogEvents`, matched to rows by time and checked by equal `timings_ms`;
+    - `summary [--aurora-acu-hours]`.
+  - Requests go through `SITE_URL`, 21 s apart. 429, 503, 504 and no answer are retried after 60 s, up to 3 times; the daily-limit 429 stops the run; rows are appended as answers arrive, and a re-run resumes.
+  - Tests: `tests/test_deployed_eval.py` (47, offline). 979 tests pass. Code review done and recorded (1 of 2), 8 of 10 fixed.
+  - Settings: `DEPLOYED_*`, `LAMBDA_FUNCTION`, `LAMBDA_MEMORY_MB`, and the prices checked on 2026-10-18: `LAMBDA_USD_PER_GB_S` 0.0000166667, `LAMBDA_USD_PER_REQUEST` $0.20 per 1M, `HTTP_API_USD_PER_REQUEST` $1.00 per 1M, `AURORA_USD_PER_ACU_HOUR` 0.12 (Standard; express configuration is not priced separately).
+  - Results:
+    - 101 asks, all 200, no retries. Spend **$0.1211**: first $0.1071, cached $0.0131, cold $0.0009.
+    - Citation hit 0.930 first and 0.953 cached (local 0.930). The same 2 false refusals (q24, q33). Unanswerable refused 6 of 6 (local 5 of 6, the q44 rewording).
+    - Nova Lite is not repeatable at temperature 0: two passes with the same rerank scores differ on q25 and q30.
+  - Latency:
+    - client p50 1.09 s for a new question (real rerank 259 ms) and 0.83 s for a cached one;
+    - cold, with Aurora paused and Lambda recycled: 21.1–21.7 s (resume 17.3–18.1 s, init about 1.2 s), under API Gateway's 30 s;
+    - about 180 ms outside Lambda.
+  - Cost per query: Bedrock $0.00219 for a new question and $0.00027 for a cached one; Lambda $0.000009 warm and $0.00017 cold (billed while it waits for Aurora); HTTP API $0.000001.
+  - Aurora: 1.619 ACU-hours over 15:00–17:00 UTC (read by the human in CloudWatch, `ServerlessDatabaseCapacity`, Average, 1 hour), so $0.194, or $0.0019 per ask. At demo traffic that is about as much as Bedrock: the cost follows the wake-ups (at least 5 minutes awake each), not the number of questions.
+  - Total per question: $0.0041 new, $0.0022 cached.
+  - Open: an optional long-idle cold trial (after a night idle: `cold --trials 1 --idle-minutes 0 --yes`, then `logs`, `summary --aurora-acu-hours 1.6186`).
+  - Gotcha: CloudWatch lines can take more than a minute to appear, so run `logs` a few minutes after the last call.
+  - **OPEN COST RISK, to address first in the next session (the human's request, 2026-10-18):** anyone can keep Aurora awake, and the daily cap does not stop it.
+    - Why: every `/api/ask` and `/api/documents` request connects to Aurora. `handler.py` connects before `api.ask` checks the question, so even an empty question wakes it. The daily cap itself is counted in Aurora (`api_usage`), so a request over the cap still wakes Aurora to find that out.
+    - Bound: about $1.50–3 a day realistically (0.5–1 ACU kept awake, API Gateway throttling about 1 request a second), $11.52 a day at most (the express cluster's 4 ACU limit), plus about $0.70 a day of capped questions. Budget alerts only warn; nothing stops it automatically.
+    - Options discussed:
+      - check the question before connecting (stops empty-question wake-ups only);
+      - remove the `GET /api/documents` route (the page no longer calls it);
+      - keep the daily counter outside Aurora (closes it; a bigger change);
+      - pause the demo when not showing it: route throttles to 0 (VERIFY that an HTTP API accepts 0 and answers 429), or delete the `$default` stage (stops everything, but loses the throttling and access-log settings);
+      - tear down after the report.
+    - The human decides in the next session.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -547,7 +580,7 @@ Order of work, each with a test written when the step starts:
 4. **Lambda. DONE 2026-10-17 (PR #15), see Current status.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
 5. **API Gateway. DONE 2026-10-17 (PR #16), see Current status.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
 6. **Frontend. DONE 2026-10-18 (PR #17), see Current status.** CloudFront with a private S3 bucket (OAC); `/api/*` through CloudFront to API Gateway; PDF links to the vendors' copies. Original plan: the page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
-7. **Deployed evaluation.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
+7. **Deployed evaluation. DONE 2026-10-18, see Current status.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
 8. **Knowledge Base comparison (added 2026-10-16).** Build a second RAG pipeline with Amazon Bedrock Knowledge Bases, using an S3 Vectors vector store, and compare it with our pipeline. It gets its own plan in plan mode; split it into smaller steps there if needed. What is known so far:
    - Fair comparison: same 4 PDFs, same 49 frozen questions, and the same models where the KB allows them (Titan V2 1024, Cohere Rerank 3.5, Nova Lite) (VERIFY that the KB accepts each one). Change one thing at a time.
    - Two levels: retrieval only (KB `Retrieve` against our hybrid search plus reranker: recall@k, MRR) and end to end (KB `RetrieveAndGenerate` against `answer_question`: citation hit rate, refusals, and RAGAS on the best setup if the budget allows). Map KB results to `(document, page)` hits so `rag/eval/metrics.py` is reused unchanged. The page number for a PDF chunk is expected in the result metadata (VERIFY the field name).
