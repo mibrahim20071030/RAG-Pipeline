@@ -12,7 +12,7 @@ Next session (Cycle 2):
 - [x] 2026-10-17: Cycle 2 step 3 plan approved (only `fixed_400_prefix`, only `embedding_cache` copied).
 - [x] 2026-10-17: Aurora run of step 3 approved and passed (no Bedrock calls).
 - [x] 2026-10-17: one pipeline question on Aurora approved and answered correctly ($0.0023).
-- [ ] Open the PR for Cycle 2 step 3 and merge it.
+- [x] 2026-10-17: step 3 PR merged (#14, `04b54cc`).
 - [ ] Say when to start Cycle 2 step 4 (Lambda), in plan mode.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
@@ -100,7 +100,7 @@ Cycle 2 (deploy, UI, report):
 
 - [x] 1. Aurora smoke test. Passed on 2026-10-16 (`runs/aurora_smoke.md`), PR #12 merged.
 - [x] 2. Data access layer: direct IAM-token connection (no Data API); the Layer 3 and 4 database tests pass on Aurora. PR #13 merged.
-- [x] 3. Load chunks and vectors into Aurora. Built on 2026-10-17 (`runs/aurora_load.md`); PR pending.
+- [x] 3. Load chunks and vectors into Aurora. Done on 2026-10-17 (`runs/aurora_load.md`); PR #14 merged.
 - [ ] 4. Lambda: package the pipeline and `handler.py` with an IAM role, concurrency cap and Aurora-resume retry. Check which Python versions Lambda supports first.
 - [ ] 5. API Gateway: route, throttling, daily cap, input and output limits, CORS.
 - [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
@@ -129,7 +129,8 @@ Cycle 2 (deploy, UI, report):
 - Code review done and recorded (1 of 2). Fixed 4 of 9 findings: cache paging now follows the primary key order, clear messages when either database cannot be reached (`copy_cache`, `compare_targets`), the bad-target error names both sources, and `show_db` on Aurora expects `DEFAULT_STRATEGY` without `--strategy`. Not changed: `rerank_cache` left out (the human's decision), tie order in the compare (49/49 matched), one extra round trip per copy batch, and two findings that were wrong (no connection leak; `CLAUDE.md` was already updated). 879 tests pass. Re-checked on Aurora: a second copy copied 0, and `show_db` without flags says OK.
 - Aurora's size went from 38 to 45 MB after the second load: replaced rows stay on disk until Postgres vacuums them. Still far under 1 GB.
 - Paid question on Aurora, approved by the human: q01 answered "35 V", citing LM35 page 4 (correct). Search 312 ms, rerank 1,315 ms (real call), answer 690 ms; $0.0023.
-- Open: the human's PR.
+- Merged by the human as PR #14 (`04b54cc`).
+- Open: Cycle 2 step 4 (Lambda), in plan mode, when the human says so. From step 2: the Lambda needs a shorter connect timeout and fewer attempts than the local 3 × 60 s, to fit API Gateway's 29 s.
 
 ## 2026-10-17 — Session 14: Cycle 2 step 2 (data access layer), built
 
