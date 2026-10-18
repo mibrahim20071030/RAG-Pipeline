@@ -8,6 +8,9 @@ POST /api/ask   {"question": "...", "document": null | "<name>"}
           sources: [{label, document, part, page, page_label, title, pdf_url}], warnings, timings_ms, spent_usd, setup}
   4xx / 5xx -> {"error": "<what happened and what to do>"}
 GET /api/documents -> 200 [{name, part, revision, pdf_url}]
+
+pdf_url is /pdfs/<file> when the PDF is on this machine (rag.server serves it), else the vendor's https address, else
+null.
 """
 import contextlib
 from urllib.parse import quote
@@ -33,16 +36,19 @@ def _error(status: int, message: str) -> tuple[int, dict]:
     return status, {"error": message}
 
 
-def _pdf_url(file: str | None) -> str | None:
-    """Where the server serves a datasheet, or None when its PDF is not on this machine."""
-    if not file or not (config.PDF_DIR / file).is_file():
-        return None
-    return "/pdfs/" + quote(file)
+def _pdf_url(name: str, file: str | None) -> str | None:
+    """Where a datasheet can be read: the local server's copy when running locally with the PDF on this machine,
+    otherwise the vendor's own copy (config.DOCUMENTS "url", checked to be our revision on 2026-10-18, but it always
+    serves the newest), otherwise None. Deployed, it is never a local copy: the vendors do not allow republishing."""
+    if file and not config.DEPLOYED and (config.PDF_DIR / file).is_file():
+        return "/pdfs/" + quote(file)
+    return config.DOCUMENTS.get(name, {}).get("url")
 
 
 def documents(conn) -> list[dict]:
     """The stored datasheets, for the page's filter: name, part, revision and the PDF's address."""
-    return [{"name": row["name"], "part": row["part"], "revision": row["revision"], "pdf_url": _pdf_url(row["file"])}
+    return [{"name": row["name"], "part": row["part"], "revision": row["revision"],
+             "pdf_url": _pdf_url(row["name"], row["file"])}
             for row in db.list_documents(conn)]
 
 
@@ -64,7 +70,7 @@ def _bedrock_error(error: Exception) -> tuple[int, dict]:
 
 
 def _source(source: dict, files: dict[str, str | None]) -> dict:
-    url = _pdf_url(files.get(source["document"]))
+    url = _pdf_url(source["document"], files.get(source["document"]))
     return {
         "label": source["label"],
         "document": source["document"],

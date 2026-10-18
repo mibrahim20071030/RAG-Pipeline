@@ -38,7 +38,8 @@ def running(tmp_path):
 
     def documents(conn):
         calls["documents"] += 1
-        return [{"name": "lm35", "part": "LM35", "revision": "r", "pdf_url": "/pdfs/lm35.pdf"}]
+        return [{"name": "lm35", "part": "LM35", "revision": "r", "pdf_url": "/pdfs/lm35.pdf"},
+                {"name": "esp32", "part": "ESP32", "revision": "r", "pdf_url": "https://vendor.example/esp32.pdf"}]
 
     srv = server.make_server(port=0, connect=connect, ask=ask, documents=documents, web_dir=web, pdf_dir=pdfs)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -160,6 +161,11 @@ def test_unexpected_error_still_answers_json(running, capsys):
     port, _, _ = running
     response, data = post(port, {"question": "crash"})
     assert response.status == 500 and "unexpected" in json.loads(data)["error"]
+
+
+def test_vendor_addresses_are_not_on_the_allow_list(running):
+    _, _, state = running
+    assert state.pdf_files() == {"lm35.pdf"}
 
 
 def test_pdf_allow_list_is_read_once(running):

@@ -1,21 +1,25 @@
 """Call the deployed API (API Gateway HTTP API in front of the Lambda function) the way a browser would.
 
-Run from datasheet-rag, with API_URL (the invoke URL, no trailing path) in .env or the environment:
+Run from datasheet-rag, with API_URL (the invoke URL, no trailing path) in .env or the environment. With
+--base site, every command goes to SITE_URL instead (the CloudFront address, which passes /api/* on to the API):
     python scripts\\call_api.py documents                      free: one database read
     python scripts\\call_api.py ask "What is ...?" --yes       paid: about $0.0023 new, $0.0003 cached
     python scripts\\call_api.py cors http://localhost:8000     free: a preflight and a GET with that Origin
     python scripts\\call_api.py limits                         free: unknown route, wrong method, long question, big body
     python scripts\\call_api.py throttle --route ask --count 6 free: empty questions at once (Lambda answers 400)
     python scripts\\call_api.py usage                          free: today's count of the daily cap, read from Aurora
+    python scripts\\call_api.py --base site page               free: the page itself, and http:// sent on to https://
 
 No AWS key is used except by `usage`, which reads Aurora with the dev user's IAM token.
 """
 import argparse
+import http.client
 import json
 import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -26,13 +30,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rag import config, db  # config also reads .env
 
 JSON = {"content-type": "application/json"}
+BASES = {"api": ("API_URL", "the API's invoke URL"), "site": ("SITE_URL", "the CloudFront address")}
+base = "api"  # set by --base
 
 
 def base_url() -> str:
-    url = os.environ.get("API_URL", "").rstrip("/")
+    name, what = BASES[base]
+    url = os.environ.get(name, "").rstrip("/")
     if not url:
-        sys.exit("Set API_URL (the API's invoke URL) in datasheet-rag\\.env first.")
-    return url
+        sys.exit(f"Set {name} ({what}) in datasheet-rag\\.env first.")
+    # The CloudFront console shows the domain name without a scheme.
+    return url if "://" in url else "https://" + url
 
 
 def call(method: str, path: str, body: bytes | None = None, headers: dict | None = None) -> tuple[int, dict, str, float]:
@@ -98,6 +106,24 @@ def cmd_throttle(route: str, count: int) -> None:
             break
 
 
+def cmd_page() -> None:
+    """The page from the site: 200, HTML and its title; then the same address over http, which must be redirected."""
+    status, head, text, seconds = call("GET", "/")
+    title = "<title>Datasheet Q&amp;A</title>" in text
+    print(f"GET / -> {status} in {seconds:.2f} s, {head.get('content-type')}, title found: {title}, "
+          f"cache: {head.get('x-cache')}")
+    url = urllib.parse.urlsplit(base_url())
+    plain = http.client.HTTPConnection(url.hostname, 80, timeout=20)
+    try:
+        plain.request("GET", "/")
+        response = plain.getresponse()
+        print(f"http:// GET / -> {response.status}, Location {response.getheader('Location')}")
+    except OSError as error:
+        print(f"http:// GET / -> no answer ({type(error).__name__}: {error})")
+    finally:
+        plain.close()
+
+
 def at_least_one(text: str) -> int:
     value = int(text)
     if value < 1:
@@ -107,7 +133,10 @@ def at_least_one(text: str) -> int:
 
 def main(argv: list[str]) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
+    global base
     parser = argparse.ArgumentParser(description="Call the deployed API.")
+    parser.add_argument("--base", choices=list(BASES), default="api",
+                        help="api: API_URL, the API directly (default); site: SITE_URL, through CloudFront")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("documents")
     ask = sub.add_parser("ask")
@@ -121,7 +150,11 @@ def main(argv: list[str]) -> None:
     throttle.add_argument("--route", choices=["ask", "documents"], required=True)
     throttle.add_argument("--count", type=at_least_one, default=6)
     sub.add_parser("usage")
+    sub.add_parser("page")
     args = parser.parse_args(argv)
+    base = args.base
+    if args.command == "page" and base != "site":
+        sys.exit("page checks the CloudFront site: run it with --base site.")
 
     if args.command == "documents":
         status, _, text, seconds = call("GET", "/api/documents")
@@ -138,6 +171,8 @@ def main(argv: list[str]) -> None:
         cmd_limits()
     elif args.command == "throttle":
         cmd_throttle(args.route, args.count)
+    elif args.command == "page":
+        cmd_page()
     else:
         with db.connect(target="aurora") as conn:
             print(f"Questions counted today (UTC): {db.daily_asks(conn)}")

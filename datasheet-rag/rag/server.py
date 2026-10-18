@@ -41,10 +41,11 @@ class _State:
 
     def pdf_files(self) -> set[str]:
         """File names of the stored datasheets that are on disk: the only files /pdfs/ serves. Read from the
-        database once; the browser's PDF viewer makes several requests per document."""
+        database once; the browser's PDF viewer makes several requests per document. A vendor's https address
+        (a PDF that is not on disk) is not one of them."""
         if self._pdf_files is None:
             self._pdf_files = {unquote(doc["pdf_url"].removeprefix("/pdfs/"))
-                               for doc in self.documents(self.conn()) if doc["pdf_url"]}
+                               for doc in self.documents(self.conn()) if (doc["pdf_url"] or "").startswith("/pdfs/")}
         return self._pdf_files
 
     def conn(self):

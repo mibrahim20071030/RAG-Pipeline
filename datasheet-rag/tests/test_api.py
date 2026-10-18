@@ -10,6 +10,13 @@ DOCS = [
     {"id": 1, "name": "esp32_datasheet_en", "file": "esp32_datasheet_en.pdf", "part": "ESP32", "revision": "Version 5.3"},
     {"id": 2, "name": "lm35", "file": "lm35.pdf", "part": "LM35", "revision": "SNIS159H"},
 ]
+REAL_DOCUMENTS = config.DOCUMENTS  # kept before the setup fixture replaces it
+# The vendors' addresses, as in config.DOCUMENTS; the STM32 one is None, as for a revision the vendor no longer has.
+VENDOR = {
+    "esp32_datasheet_en": {"part": "ESP32", "revision": "Version 5.3", "url": "https://vendor.example/esp32.pdf"},
+    "lm35": {"part": "LM35", "revision": "SNIS159H", "url": "https://vendor.example/lm35.pdf"},
+    "DS_CD00237391": {"part": "STM32F205/207", "revision": "DS6329 Rev 18", "url": None},
+}
 
 
 def result(**fields) -> dict:
@@ -25,13 +32,15 @@ def result(**fields) -> dict:
 
 @pytest.fixture(autouse=True)
 def setup(monkeypatch, tmp_path):
-    """Documents from a fake list; only lm35.pdf exists on disk; the cost log in tmp_path."""
+    """Documents from a fake list; only lm35.pdf exists on disk; vendor addresses from VENDOR; the cost log in
+    tmp_path."""
     pdfs = tmp_path / "pdfs"
     pdfs.mkdir()
     (pdfs / "lm35.pdf").write_bytes(b"%PDF-1.4")
     monkeypatch.setattr(config, "PDF_DIR", pdfs)
     monkeypatch.setattr(config, "COST_LOG", tmp_path / "cost_log.csv")
     monkeypatch.setattr(db, "list_documents", lambda conn: DOCS)
+    monkeypatch.setattr(config, "DOCUMENTS", VENDOR)
 
 
 def fake_answer(returned=None, raises=None, seen=None):
@@ -50,7 +59,28 @@ def test_documents_for_the_filter():
     docs = api.documents(None)
     assert [d["name"] for d in docs] == ["esp32_datasheet_en", "lm35"]
     assert docs[1] == {"name": "lm35", "part": "LM35", "revision": "SNIS159H", "pdf_url": "/pdfs/lm35.pdf"}
-    assert docs[0]["pdf_url"] is None  # its PDF is not on this machine
+    assert docs[0]["pdf_url"] == "https://vendor.example/esp32.pdf"  # its PDF is not on this machine
+
+
+def test_documents_without_a_local_pdf_or_vendor_address(monkeypatch):
+    monkeypatch.setattr(db, "list_documents", lambda conn: [
+        {"id": 3, "name": "DS_CD00237391", "file": "DS_CD00237391.pdf", "part": "STM32F205/207", "revision": "r"},
+        {"id": 4, "name": "unknown", "file": None, "part": None, "revision": None},
+    ])
+    assert [d["pdf_url"] for d in api.documents(None)] == [None, None]
+
+
+def test_deployed_never_links_to_a_local_copy(monkeypatch):
+    monkeypatch.setattr(config, "DEPLOYED", True)
+    docs = api.documents(None)
+    assert docs[1]["pdf_url"] == "https://vendor.example/lm35.pdf"  # lm35.pdf is on disk, but not served deployed
+
+
+def test_every_configured_vendor_address_is_https():
+    assert REAL_DOCUMENTS
+    for name, entry in REAL_DOCUMENTS.items():
+        assert "url" in entry, name
+        assert entry["url"] is None or entry["url"].startswith("https://"), name
 
 
 # ---------------------------------------------------------------- a good answer
@@ -70,7 +100,14 @@ def test_answer_shape():
     }]
 
 
-def test_source_without_a_local_pdf_has_no_link():
+def test_source_without_a_local_pdf_links_to_the_vendor_page():
+    answer = result(sources=[{"label": 1, "id": 9, "document": "esp32_datasheet_en", "page": 51, "page_label": "51"}])
+    status, body = api.ask(None, {"question": "q"}, fake_answer(answer))
+    assert status == 200 and body["sources"][0]["pdf_url"] == "https://vendor.example/esp32.pdf#page=51"
+
+
+def test_source_without_any_pdf_has_no_link(monkeypatch):
+    monkeypatch.setitem(VENDOR, "esp32_datasheet_en", {**VENDOR["esp32_datasheet_en"], "url": None})
     answer = result(sources=[{"label": 1, "id": 9, "document": "esp32_datasheet_en", "page": 51, "page_label": "51"}])
     status, body = api.ask(None, {"question": "q"}, fake_answer(answer))
     assert status == 200 and body["sources"][0]["pdf_url"] is None

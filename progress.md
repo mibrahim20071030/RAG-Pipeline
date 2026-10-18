@@ -23,7 +23,17 @@ Next session (Cycle 2):
 - [x] 2026-10-17: `API_DAILY_ASK_LIMIT` set back to `300`.
 - [x] 2026-10-17: rebuilt zip uploaded (22,686,478 bytes, checked); `documents` 200.
 - [x] 2026-10-17: step 5 PR merged (#16, `e0ac474`).
-- [ ] Say when to start Cycle 2 step 6 (Frontend), in plan mode.
+- [x] 2026-10-18: Cycle 2 step 6 plan approved (CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links, uploads by you).
+- [x] 2026-10-18: step 0 done: the ST and Toshiba vendor links are the same documents as ours.
+- [x] 2026-10-18: step 6 console work done; the free checks through CloudFront passed.
+- [x] 2026-10-18: paid ask through CloudFront approved and passed ($0.0003); page tried in a browser, "Open page" works.
+- [x] 2026-10-18: rebuilt zip and new `index.html` uploaded and invalidated; Claude checked that CloudFront serves the new page and `/api/documents` answers (17.9 s, Aurora waking).
+- [x] 2026-10-18: Toshiba link checked: `#page=5` opened the datasheet in the browser at page 5.
+- [x] 2026-10-18: decided option A: the datasheet list is written into the page, so a visit no longer wakes Aurora.
+- [x] 2026-10-18: option A `index.html` uploaded (14:55:50 UTC) and invalidated; Claude checked that the page CloudFront serves is byte for byte the local file.
+- [x] 2026-10-18: Docker started; the full tests pass (932).
+- [ ] Open the step 6 PR.
+- [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
@@ -119,6 +129,60 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-18 — Session 18: Cycle 2 step 6 (Frontend), code built, waiting for the console work
+
+- Plan approved. Decisions (the human):
+  - **CloudFront in front of a private S3 bucket, with OAC.** The AWS docs (checked today) say S3 website endpoints are HTTP only and public only.
+  - **Same origin.** CloudFront sends `/api/*` to API Gateway, so the page is unchanged and the API's CORS is cleared.
+  - **Vendor PDF links, no PDFs in S3.** The datasheets forbid republishing: TI says "Other reproduction and display of these resources is prohibited", and Toshiba says "may not be reproduced without prior written permission".
+  - The human uploads in the console.
+- CloudFront Free flat-rate plan checked: $0, no overage charges, 1 M requests and 100 GB a month, 5 cache behaviors.
+- Built:
+  - `config.DOCUMENTS` `url` for each datasheet;
+  - `api._pdf_url(name, file)` (local copy, then vendor, then None);
+  - the server's allow-list keeps only `/pdfs/` paths;
+  - `web/index.html` handles API Gateway's and CloudFront's own errors, shows no retry on the daily limit, and shows "Loading datasheets…";
+  - `call_api.py --base site` and `page`;
+  - 7 new or changed tests.
+- 721 tests pass. Docker was not running, so 207 database tests were skipped. `build/lambda.zip` rebuilt.
+- Vendor files: ESP32 and LM35 are byte for byte ours. ST (connection reset, timeout) and Toshiba (403) refuse scripted downloads, so the human checks them in a browser. Toshiba's product page lists the file as 1046 KB, the same size as ours.
+- The human confirmed in a browser that the ST and Toshiba vendor links serve the same documents as ours, so all four `url`s stay. The `config.py` comment and step 0 of the guide record this.
+- S3 bucket namespace: **Global**. The account regional namespace (added March 2026) puts the account ID in the bucket name, which then shows up in the origin settings and the bucket policy. The guide's step 2 now says so.
+- CloudFront distribution `datasheet-rag-web` created by the human:
+  - **Pay-as-you-go**, because the wizard offered no plan choice. The console shows the free tier: 1 TB, 10 M requests and 2 M Function invocations a month; after that $0.01 per 10,000 HTTPS requests.
+  - **WAF off** (about $14 a month).
+  - Settings: private S3 access (OAC), recommended origin settings, recommended S3 cache settings.
+- Console work done by the human: zip uploaded, bucket, distribution, API origin, `/api/*` behavior, CORS cleared, `SITE_URL` in `.env`.
+  - `SITE_URL` was first entered without `https://`, as the console shows it. `call_api.py` now adds `https://` when it is missing, and the human also fixed `.env`.
+- Free deployed checks through CloudFront, all passed:
+  - page 200, HTML, the right title; `http://` gets a 301 to `https://`;
+  - `/api/documents` 200 in 18.7 s (Aurora waking), 4 datasheets, each with its vendor link (so the new zip is live);
+  - limits: 404 / 400 / 413 / 415;
+  - CORS cleared: a preflight from another origin gets 404, with no allow-origin header;
+  - the throttle still gives 429 through CloudFront.
+- Paid ask through CloudFront, approved by the human: "What is the absolute maximum supply voltage of the LM35?" gave 200 in 0.91 s, "35 V [5]", citing LM35 page 4 with the TI link `#page=4`, for $0.0003. The human asked from the page in a browser, and "Open page" opened the vendor PDF. Results table and findings are in `datasheet-rag/runs/frontend_deploy.md`.
+- Code review (1 of 2) done and recorded, 5 of 8 findings fixed:
+  - no "Try again" on a 4xx other than a throttling 429;
+  - deployed, `_pdf_url` always gives the vendor link (new test);
+  - `call_api.py page` no longer crashes and needs `--base site`;
+  - wording about the revisions;
+  - long lines.
+- Reported, not changed: vendor revision drift; the Toshiba link may download instead of opening at the page; every page load wakes Aurora through `/api/documents`. Details in `datasheet-rag/runs/frontend_deploy.md`.
+- 722 tests pass (207 skipped without Docker). Zip rebuilt (22,687,072 bytes).
+- The human uploaded the zip and the page and invalidated; Claude checked that CloudFront serves the new page.
+- Page loads woke Aurora:
+  - explained to the human, with the cost: cents for normal use, about $20 over two weeks if a bot kept Aurora from pausing (at about $0.12 per ACU-hour, a third-party figure);
+  - the human chose option A: the four datasheets are written into `web/index.html` as `<option>`s, and the page no longer fetches `/api/documents`;
+  - new `tests/test_page.py` (3 tests) keeps them equal to `config.DOCUMENTS`;
+  - 932 tests pass with Docker.
+- Toshiba link checked by the human: it opens in the browser at the cited page.
+- First re-upload check: CloudFront still served the earlier page. Its S3 object was last modified at 14:39:38 UTC, which is before the option A change, so the human uploads `index.html` again and invalidates again.
+- Second upload at 14:55:50 UTC, plus a third invalidation: `/` and `/index.html` now have the same MD5 as the local file (`9dbc408c…`), and the list is in the page. Invalidations used so far: 6 paths (1,000 a month are free).
+- Step 6 is finished and ready for the human's PR. Spend $0.0003.
+- Open:
+  - the code review;
+  - the full test run with Docker before the PR.
 
 ## 2026-10-17 — Session 17: Cycle 2 step 5 (API Gateway), code built, waiting for the console work
 
