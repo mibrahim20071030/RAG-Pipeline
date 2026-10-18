@@ -25,7 +25,9 @@ def _bedrock():
     if _client is None:
         # The Rerank API is on the agent runtime endpoint. Adaptive retries try again when Bedrock throttles.
         _client = boto3.client("bedrock-agent-runtime", region_name=config.AWS_REGION,
-                               config=Config(retries={"max_attempts": 10, "mode": "adaptive"}))
+                               config=Config(retries={"max_attempts": config.BEDROCK_MAX_ATTEMPTS, "mode": "adaptive"},
+                                             connect_timeout=config.BEDROCK_CONNECT_TIMEOUT_S,
+                                             read_timeout=config.BEDROCK_READ_TIMEOUT_S))
     return _client
 
 

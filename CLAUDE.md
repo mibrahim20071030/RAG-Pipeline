@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 4 (Lambda), in plan mode, when the human says so.
+- Next: the human's PR for Cycle 2 step 4. Then step 5 (API Gateway), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -193,6 +193,15 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Files: `rag/db.py` (`connect(schema=None, target=None)`, where `target` overrides `DB_TARGET`; `embedding_rows`, `embedding_counts`, `database_size`), `rag/copy_cache.py` (`copy_embeddings`; `python -m rag.copy_cache [--run]` copies local to Aurora, only missing rows), `scripts/show_db.py` (`--strategy`, repeatable; prints cache counts and size), `scripts/compare_targets.py`, `tests/test_copy_cache.py`, 3 tests in `tests/test_db_connect.py`.
   - End to end on Aurora (paid, $0.0023): q01 answered 35 V citing LM35 page 4; search 312 ms, rerank 1,315 ms, answer 690 ms.
   - To reload Aurora from scratch: `python -m rag.copy_cache --run`, then with `DB_TARGET=aurora`, `python -m rag.load --strategy fixed_400_prefix --run`.
+- Cycle 2 step 4 (Lambda): DONE on 2026-10-17 (single agent), waiting for the human's PR; results in `datasheet-rag/runs/lambda_deploy.md`. 905 tests pass.
+  - The function `datasheet-rag` (python3.14, x86_64, 512 MB, 60 s timeout) runs as role `datasheet-rag-lambda`. The dev user has the inline policy `rag-lambda-invoke` (invoke, read configuration, filter logs). The account's Lambda concurrency quota is 10, so no reserved concurrency is possible; step 5's throttling is the guard.
+  - Measured: a cold call with Aurora paused took 19.5 s (connect 17.9 s, init 0.96 s); warm 4.6 ms; a new question 1.05 s in the function. Cache writes from Lambda work. Spend $0.0026.
+  - After the code review (1 of 2, 7 of 10 fixed), each request opens and closes its own connection, because Aurora Serverless v2 does not pause while a user connection is open. `config.DEPLOYED` (Lambda's `AWS_LAMBDA_FUNCTION_NAME` is set) switches `rag/api.py` to neutral error messages and makes `costlog.log_cost` also print a `{"cost": ...}` line for CloudWatch. New settings: `BEDROCK_CONNECT_TIMEOUT_S`, `BEDROCK_READ_TIMEOUT_S` (Lambda 5 and 20). Pins for the zip come from `requirements.txt`. 911 tests pass. Re-tested after the re-upload: warm connect 48–178 ms; after 7 idle minutes the connect took 18.7 s, so Aurora pauses; the cost lines reach CloudWatch. Step 4 spend $0.0029.
+  - To redeploy: `python scripts\build_lambda.py`, then upload `build\lambda.zip` in the console and click Save (a first upload once did not save; check that the code size is about 22.7 MB).
+  - `handler.py` (`lambda_handler`; HTTP API 2.0 and REST 1.0 events; one warm connection; 503 when Aurora does not answer; one JSON log line per request), `scripts/build_lambda.py` (`build/lambda.zip`, Linux wheels, 22.7 MB), `scripts/invoke_lambda.py` (`documents` free, `ask` needs `--yes`), `tests/test_handler.py`.
+  - Settings Lambda sets in its environment (defaults unchanged locally): `RAG_RUNS_DIR=/tmp/runs`, `BEDROCK_MAX_ATTEMPTS=2` (new setting), `RERANK_MIN_INTERVAL_S=0`, `AURORA_CONNECT_ATTEMPTS=1`, `AURORA_CONNECT_TIMEOUT_S=22`.
+  - Verified: psycopg-binary 3.3.6 has a cp314 manylinux wheel, so the runtime is `python3.14`; the zip ran in `public.ecr.aws/lambda/python:3.14` against the local database.
+  - Decisions: the dev user gets `lambda:InvokeFunction` on this function (Claude runs the deployed tests); the deployed function writes to the Aurora caches.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -507,7 +516,7 @@ Order of work, each with a test written when the step starts:
 1. **Aurora smoke test (first step). DONE 2026-10-16, see Current status.** Original plan: create an Aurora PostgreSQL Serverless v2 cluster on the Free plan with minimum capacity 0 ACU. Enable the Data API. Run `CREATE EXTENSION vector`. If pgvector, minimum 0 ACU, or the Data API do not work on this account, switch to the RDS db.t4g.micro fallback and note the cost.
 2. **Data access layer. BUILT 2026-10-17, see Current status.** `db.connect()` reaches Aurora directly with an IAM token (`DB_TARGET=aurora`); no Data API backend. The Layer 3 and 4 database tests pass on both targets.
 3. **Load the data. DONE 2026-10-17 (PR #14), see Current status.** `fixed_400_prefix` (797 rows) and the whole `embedding_cache` are in Aurora; counts, dims and all 49 search results match the local database.
-4. **Lambda.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
+4. **Lambda. DEPLOYED 2026-10-17, see Current status.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
 5. **API Gateway.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
 6. **Frontend.** The page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
 7. **Deployed evaluation.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
@@ -521,7 +530,7 @@ Order of work, each with a test written when the step starts:
 
 ### Teardown checklist
 
-- Delete the API Gateway API and the Lambda function and its role.
+- Delete the API Gateway API and the Lambda function and its role (`datasheet-rag-lambda`). Remove the dev user's inline policy `rag-lambda-invoke`.
 - Empty and delete the S3 buckets (page and PDFs).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
 - Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)

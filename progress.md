@@ -13,7 +13,12 @@ Next session (Cycle 2):
 - [x] 2026-10-17: Aurora run of step 3 approved and passed (no Bedrock calls).
 - [x] 2026-10-17: one pipeline question on Aurora approved and answered correctly ($0.0023).
 - [x] 2026-10-17: step 3 PR merged (#14, `04b54cc`).
-- [ ] Say when to start Cycle 2 step 4 (Lambda), in plan mode.
+- [x] 2026-10-17: Cycle 2 step 4 plan approved (dev user may invoke the function; the function writes to the caches).
+- [x] 2026-10-17: Cycle 2 step 4 console work done (concurrency quota 10, so no reserved concurrency).
+- [x] 2026-10-17: zip re-uploaded; the deployed tests passed ($0.0026).
+- [x] 2026-10-17: zip re-uploaded and the Bedrock timeout variables added; the re-test passed.
+- [ ] Open the PR for Cycle 2 step 4 and merge it.
+- [ ] Say when to start Cycle 2 step 5 (API Gateway), in plan mode.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
@@ -108,6 +113,35 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-17 — Session 16: Cycle 2 step 4 (Lambda), code built, waiting for the console work
+
+- Plan approved by the human. Decisions: the dev user may invoke this one function and read its logs, so Claude runs the deployed tests; the deployed function writes to the Aurora caches (`rag_app` owns the tables). Single-agent build.
+- Built:
+  - `rag/config.py`: `RUNS_DIR` from `RAG_RUNS_DIR`; `AURORA_CONNECT_TIMEOUT_S`, `AURORA_CONNECT_ATTEMPTS`, `AURORA_RETRY_PAUSE_S` and `RERANK_MIN_INTERVAL_S` from the environment; new `BEDROCK_MAX_ATTEMPTS` (default 10), used by the three Bedrock clients. Defaults unchanged, so local runs behave as before.
+  - `datasheet-rag/handler.py`: `lambda_handler` reads HTTP API 2.0 and REST 1.0 events, routes `POST /api/ask` and `GET /api/documents` to `rag.api`, keeps one connection while warm, answers 503 "the database is waking up" when Aurora does not answer, and prints one JSON log line per request (route, status, timings, spend).
+  - `scripts/build_lambda.py`: `build/lambda.zip` with the Linux wheels (22.7 MB zipped, 44.3 MB unzipped); checks that every `rag` module the packed files import is packed. `build/` is gitignored.
+  - `scripts/invoke_lambda.py`: calls the deployed function; `ask` needs `--yes`.
+  - `tests/test_handler.py`: 26 tests, offline. 905 tests pass.
+- Verified: psycopg-binary 3.3.6 has a cp314 manylinux wheel, so the function runs on `python3.14`. The zip ran in `public.ecr.aws/lambda/python:3.14` against the local database: documents 200, empty question 400, init 2.3 s.
+- Console steps for the human are in `datasheet-rag/runs/lambda_deploy.md`.
+- Console work done by the human: role, function, environment and dev user invoke policy. Lambda's "Concurrent executions" quota is 10, so no reserved concurrency was set; step 5's API Gateway throttling is the guard.
+- First deployed call: "No module named 'handler'". The function's code size was 299 bytes, the console's default stub, so the zip upload had not been saved. The human re-uploads. Also fixed: `scripts/invoke_lambda.py` now puts `datasheet-rag` on `sys.path`, as the other scripts do.
+- Deployed tests after the re-upload (approved by the human; $0.0026; details in `datasheet-rag/runs/lambda_deploy.md`):
+  - cold call with Aurora paused: init 0.96 s, connect 17.9 s, 19.5 s round trip, inside API Gateway's 30 s;
+  - warm call 4.6 ms in the function;
+  - q01 (cached): "35 V", LM35 page 4, $0.0003;
+  - a new question: 1.05 s in the function, and the Aurora caches grew by 1 vector and 30 rerank scores;
+  - answer-quality fault seen: "output impedance of the LM35" was answered "0.5 Ω for a 1-mA load", which joins two different datasheet statements (0.1 Ω for 1 mA on page 1, 0.5 Ω typical on page 13). Not a Lambda fault; noted for step 7.
+- Code review done and recorded (1 of 2). 7 of 10 findings fixed (list in `datasheet-rag/runs/lambda_deploy.md`). The main one: the handler kept a connection open across warm calls, and Aurora Serverless v2 does not pause while a user connection is open (confirmed in the AWS docs), so the cluster could have stayed awake and billing. Now each request opens and closes its own connection. Also: stage names stripped from the path, a JSON 500 for any failure, Bedrock connect/read timeouts (`BEDROCK_CONNECT_TIMEOUT_S` 5, `BEDROCK_READ_TIMEOUT_S` 20 in Lambda), neutral error messages and `{"cost": ...}` log lines when `config.DEPLOYED`, pins read from `requirements.txt`. 911 tests pass. The zip was rebuilt.
+- Re-test after the human's re-upload (q01 approved; $0.0003):
+  - warm calls now connect per request in 48–178 ms;
+  - after 7 idle minutes the connect took 18.7 s, so Aurora had paused;
+  - q01 correct;
+  - the two `{"cost": ...}` lines are in CloudWatch.
+
+  Step 4 spend in total: $0.0029. A first CloudWatch filter returned nothing because the lines were not searchable yet; reading the log group a little later showed them.
+- Open: the human's PR for Cycle 2 step 4.
 
 ## 2026-10-17 — Session 15: Cycle 2 step 3 (load the data into Aurora), code built
 

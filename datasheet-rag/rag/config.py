@@ -4,9 +4,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PDF_DIR = ROOT / "data" / "pdfs"
-RUNS_DIR = ROOT / "runs"
-COST_LOG = RUNS_DIR / "cost_log.csv"
-PARSED_DIR = RUNS_DIR / "parsed"
 
 
 def _load_env(path: Path) -> None:
@@ -23,7 +20,22 @@ def _load_env(path: Path) -> None:
 
 _load_env(ROOT / ".env")
 
+# Outputs and the cost log. Lambda can write only under /tmp, so it sets RAG_RUNS_DIR=/tmp/runs.
+RUNS_DIR = Path(os.environ.get("RAG_RUNS_DIR") or ROOT / "runs")
+COST_LOG = RUNS_DIR / "cost_log.csv"
+PARSED_DIR = RUNS_DIR / "parsed"
+
 AWS_REGION = "us-east-1"
+# Tries per Bedrock call, throttling retries included. Lambda sets 2, so a throttle fails fast instead of passing
+# API Gateway's 30 s limit.
+BEDROCK_MAX_ATTEMPTS = int(os.environ.get("BEDROCK_MAX_ATTEMPTS") or "10")
+# Seconds to open a connection to Bedrock and to wait for its answer (botocore's defaults are 60). Lambda sets lower
+# values, so one slow call cannot hold a request past API Gateway's limit.
+BEDROCK_CONNECT_TIMEOUT_S = float(os.environ.get("BEDROCK_CONNECT_TIMEOUT_S") or "60")
+BEDROCK_READ_TIMEOUT_S = float(os.environ.get("BEDROCK_READ_TIMEOUT_S") or "60")
+# True inside Lambda, which sets AWS_LAMBDA_FUNCTION_NAME itself: error messages then give no local-machine hints,
+# and each cost log row is also printed to the log, because the cost log in /tmp goes with the container.
+DEPLOYED = bool(os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 
 # Embeddings. Request and response fields checked against the Bedrock user guide on 2026-10-11.
 EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"
@@ -85,7 +97,9 @@ PART_ALIASES = {
 RERANK_MODEL_ID = "cohere.rerank-v3-5:0"
 RERANK_ENABLED = True  # frozen
 RERANK_MAX_DOCS = 100  # documents per call: one billed query covers up to 100
-RERANK_MIN_INTERVAL_S = 20  # seconds between calls: the account's quota is 3 requests a minute
+# Seconds between calls in one process: the account's quota is 3 requests a minute. Lambda sets 0, because a 20 s wait
+# inside a request would pass API Gateway's limit; a throttle then comes back as a 429.
+RERANK_MIN_INTERVAL_S = float(os.environ.get("RERANK_MIN_INTERVAL_S") or "20")
 RERANK_USD_PER_QUERY = 0.002  # $2.00 per 1,000 queries
 
 # Generation. Converse API fields checked against the Bedrock user guide on 2026-10-14. Price verified by the human
@@ -147,10 +161,11 @@ AURORA_PORT = int(os.environ.get("AURORA_PORT") or "5432")
 AURORA_DATABASE = os.environ.get("AURORA_DATABASE", "postgres")
 AURORA_USER = os.environ.get("AURORA_USER", "rag_app")
 # A resume after auto-pause takes about 15 s, 30 s or more after a day (AWS docs, checked 2026-10-16).
-AURORA_CONNECT_TIMEOUT_S = 60
-AURORA_CONNECT_ATTEMPTS = 3
-AURORA_RETRY_PAUSE_S = 5  # a refused connection while the cluster wakes fails at once; wait before the next try
-# Worst case is 3 x 60 s, well past API Gateway's 29 s. Lambda (step 4) must set a lower timeout and fewer attempts.
+AURORA_CONNECT_TIMEOUT_S = int(os.environ.get("AURORA_CONNECT_TIMEOUT_S") or "60")
+AURORA_CONNECT_ATTEMPTS = int(os.environ.get("AURORA_CONNECT_ATTEMPTS") or "3")
+# A refused connection while the cluster wakes fails at once; wait before the next try.
+AURORA_RETRY_PAUSE_S = float(os.environ.get("AURORA_RETRY_PAUSE_S") or "5")
+# Worst case here is 3 x 60 s, well past API Gateway's 30 s, so Lambda sets one attempt with a shorter timeout.
 # CA bundle the server certificate is checked against. Empty means the one that ships with botocore: libpq's
 # "system" store is empty on Windows, and botocore is in the Lambda runtime too.
 AURORA_CA_BUNDLE = os.environ.get("AURORA_CA_BUNDLE", "")
