@@ -197,3 +197,72 @@ def test_database_lost(monkeypatch):
 def test_database_lost_during_the_answer():
     status, _ = api.ask(None, {"question": "q"}, fake_answer(raises=psycopg.OperationalError("gone")))
     assert status == 503
+
+
+# ---------------------------------------------------------------- the daily question cap (Cycle 2 step 5)
+
+@pytest.fixture
+def counter(monkeypatch):
+    """A fake db.take_daily_ask with a limit of 2; `counter["calls"]` counts how often it was asked."""
+    state = {"calls": 0, "asks": 0}
+
+    def take(conn, limit, day=None):
+        state["calls"] += 1
+        if state["asks"] >= limit:
+            return None
+        state["asks"] += 1
+        return state["asks"]
+
+    def release(conn, day=None):
+        state["asks"] = max(0, state["asks"] - 1)
+
+    monkeypatch.setattr(db, "take_daily_ask", take)
+    monkeypatch.setattr(db, "release_daily_ask", release)
+    monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 2)
+    return state
+
+
+def test_no_limit_never_counts(monkeypatch, counter):
+    monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 0)
+    for _ in range(3):
+        assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
+    assert counter["calls"] == 0
+
+
+def test_reached_limit_answers_429_without_calling_the_pipeline(counter):
+    assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
+    assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
+    seen = {}
+    status, body = api.ask(None, {"question": "q"}, fake_answer(seen=seen))
+    assert status == 429 and body == {"error": api.DAILY_LIMIT, "limit": "daily"}
+    assert seen == {}
+
+
+def test_aws_throttling_gives_the_place_back(counter):
+    throttled = ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "Rerank")
+    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=throttled))
+    assert status == 429 and "limit" not in body
+    assert counter["asks"] == 0
+
+
+def test_other_aws_failures_keep_the_place(counter):
+    denied = ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse")
+    assert api.ask(None, {"question": "q"}, fake_answer(raises=denied))[0] == 502
+    assert counter["asks"] == 1
+
+
+@pytest.mark.parametrize("payload", [{"question": ""}, {"question": "x" * 501}, {"question": "q", "document": "nope"},
+                                     "not a dict"])
+def test_invalid_requests_do_not_use_up_the_cap(counter, payload):
+    assert api.ask(None, payload, fake_answer())[0] == 400
+    assert counter["calls"] == 0
+
+
+def test_database_lost_while_counting(monkeypatch, counter):
+    def down(conn, limit, day=None):
+        raise psycopg.OperationalError("gone")
+
+    monkeypatch.setattr(db, "take_daily_ask", down)
+    seen = {}
+    status, _ = api.ask(None, {"question": "q"}, fake_answer(seen=seen))
+    assert status == 503 and seen == {}

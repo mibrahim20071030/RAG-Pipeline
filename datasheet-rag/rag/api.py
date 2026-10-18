@@ -9,6 +9,7 @@ POST /api/ask   {"question": "...", "document": null | "<name>"}
   4xx / 5xx -> {"error": "<what happened and what to do>"}
 GET /api/documents -> 200 [{name, part, revision, pdf_url}]
 """
+import contextlib
 from urllib.parse import quote
 
 import psycopg
@@ -21,6 +22,7 @@ NO_DATABASE = "Cannot reach Postgres. Start Docker Desktop, then run: docker sta
 DATABASE_WAKING = ("The database did not answer. It pauses when idle and takes about 20 seconds to wake up: "
                    "ask again in 20 seconds.")
 AWS_FAILED = "The answer service could not reach the AI models ({detail}). Try again later."
+DAILY_LIMIT = "The demo has reached today's limit of questions. Try again tomorrow (the day starts at 00:00 UTC)."
 
 
 def no_database() -> str:
@@ -111,12 +113,26 @@ def ask(conn, payload, answer_fn=None) -> tuple[int, dict]:
         return _error(503, no_database())
     if document is not None and document not in files:
         return _error(400, "Pick a datasheet from the list.")
+    capped = config.API_DAILY_ASK_LIMIT > 0
+    if capped:
+        try:
+            counted = db.take_daily_ask(conn, config.API_DAILY_ASK_LIMIT)
+        except psycopg.OperationalError:
+            return _error(503, no_database())
+        if counted is None:
+            # "limit" tells the page this lasts until tomorrow, unlike the throttling 429 ("wait a minute").
+            return 429, {"error": DAILY_LIMIT, "limit": "daily"}
 
     logged_before = costlog.row_count()
     try:
         result = (answer_fn or pipeline.answer_question)(conn, question, document=document)
     except (ClientError, BotoCoreError) as error:
-        return _bedrock_error(error)
+        status, body = _bedrock_error(error)
+        if capped and status == 429:
+            # AWS throttled a model before any answer was paid for, so the question gets its place back.
+            with contextlib.suppress(psycopg.Error):
+                db.release_daily_ask(conn)
+        return status, body
     except psycopg.OperationalError:
         return _error(503, no_database())
     except RuntimeError as error:
