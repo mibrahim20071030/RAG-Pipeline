@@ -9,7 +9,11 @@ Next session (Cycle 2):
 - [x] 2026-10-17: step 2 Aurora test run approved and passed.
 - [x] 2026-10-17: step 2 PR merged (#13, `bc7d476`).
 - [x] 2026-10-17: Data API parts removed in the console: endpoint disabled, role `rag_data` dropped, secret deleted, `rag-aurora-smoke` trimmed to `rds-db:connect`; the two ARN lines removed from `.env`.
-- [ ] Say when to start Cycle 2 step 3 (load the data into Aurora), in plan mode.
+- [x] 2026-10-17: Cycle 2 step 3 plan approved (only `fixed_400_prefix`, only `embedding_cache` copied).
+- [x] 2026-10-17: Aurora run of step 3 approved and passed (no Bedrock calls).
+- [x] 2026-10-17: one pipeline question on Aurora approved and answered correctly ($0.0023).
+- [ ] Open the PR for Cycle 2 step 3 and merge it.
+- [ ] Say when to start Cycle 2 step 4 (Lambda), in plan mode.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
@@ -95,8 +99,8 @@ Cycle 1 (local pipeline and evaluation):
 Cycle 2 (deploy, UI, report):
 
 - [x] 1. Aurora smoke test. Passed on 2026-10-16 (`runs/aurora_smoke.md`), PR #12 merged.
-- [ ] 2. Data API backend in `rag/db.py`; the Layer 4 query tests pass against both backends.
-- [ ] 3. Load chunks and vectors into Aurora.
+- [x] 2. Data access layer: direct IAM-token connection (no Data API); the Layer 3 and 4 database tests pass on Aurora. PR #13 merged.
+- [x] 3. Load chunks and vectors into Aurora. Built on 2026-10-17 (`runs/aurora_load.md`); PR pending.
 - [ ] 4. Lambda: package the pipeline and `handler.py` with an IAM role, concurrency cap and Aurora-resume retry. Check which Python versions Lambda supports first.
 - [ ] 5. API Gateway: route, throttling, daily cap, input and output limits, CORS.
 - [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
@@ -104,6 +108,28 @@ Cycle 2 (deploy, UI, report):
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-17 — Session 15: Cycle 2 step 3 (load the data into Aurora), code built
+
+- Plan approved by the human. Decisions: only the frozen `fixed_400_prefix` goes to Aurora (797 rows; the experiments stay local), and only `embedding_cache` is copied (3,486 vectors, including the 49 question vectors), so the load makes no Titan calls. `rerank_cache` stays local, so step 7 measures real rerank latency and cost. Single-agent build.
+- Built:
+  - `rag/db.py`: `connect(schema=None, target=None)`, where `target` overrides `DB_TARGET` so one process can hold both databases; `embedding_rows` (keyset pages of the cache), `embedding_counts`, `database_size`.
+  - `rag/copy_cache.py`: `copy_embeddings(source, dest, batch=500)` copies only the vectors the destination lacks. `python -m rag.copy_cache` prints counts, `--run` copies local to Aurora.
+  - `scripts/show_db.py`: `--strategy` (repeatable) to expect only those strategies; prints cache counts and the database size.
+  - `scripts/compare_targets.py`: hybrid top 30 for the 49 questions on local against Aurora, compared as (document, page, text hash); it stops if a question vector is missing, so no paid call.
+  - Tests: `tests/test_copy_cache.py` (7, two local throwaway schemas), 3 more in `tests/test_db_connect.py`. 879 tests pass.
+- Local baseline: `fixed_400_prefix` 797 rows (the plan's 805 was a wrong guess), 3,486 cached vectors, database 141 MB, 0 uncached questions.
+- Claude explained to the human what goes to Aurora and why: the loader rebuilds the chunks from the parsed files and takes each vector from the target database's cache, so the cache is copied first; `rerank_cache` stays out so step 7's numbers are real; "frozen" means the Layer 8 settings fixed in `rag/config.py` and asserted by a test. Copying the `chunks` rows directly was mentioned as an equal alternative; the human kept the plan.
+- Aurora run, approved by the human (details in `datasheet-rag/runs/aurora_load.md`):
+  - copy: 3,486 of 3,486 vectors in 44 s (Aurora woke in about 18 s);
+  - load dry run: 0 paid calls; load: 797 rows, 0 embedded, 12 s; a second load kept 797;
+  - `show_db --strategy fixed_400_prefix`: OK, 1024 dims, 38 MB;
+  - `compare_targets.py`: 49 of 49 questions give the same 30 hybrid candidates on both databases;
+  - the cost log stayed at 3,122 lines.
+- Code review done and recorded (1 of 2). Fixed 4 of 9 findings: cache paging now follows the primary key order, clear messages when either database cannot be reached (`copy_cache`, `compare_targets`), the bad-target error names both sources, and `show_db` on Aurora expects `DEFAULT_STRATEGY` without `--strategy`. Not changed: `rerank_cache` left out (the human's decision), tie order in the compare (49/49 matched), one extra round trip per copy batch, and two findings that were wrong (no connection leak; `CLAUDE.md` was already updated). 879 tests pass. Re-checked on Aurora: a second copy copied 0, and `show_db` without flags says OK.
+- Aurora's size went from 38 to 45 MB after the second load: replaced rows stay on disk until Postgres vacuums them. Still far under 1 GB.
+- Paid question on Aurora, approved by the human: q01 answered "35 V", citing LM35 page 4 (correct). Search 312 ms, rerank 1,315 ms (real call), answer 690 ms; $0.0023.
+- Open: the human's PR.
 
 ## 2026-10-17 — Session 14: Cycle 2 step 2 (data access layer), built
 

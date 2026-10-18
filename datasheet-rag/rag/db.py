@@ -64,21 +64,23 @@ CREATE TABLE IF NOT EXISTS rerank_cache (
 """
 
 
-def connect(schema: str | None = None) -> psycopg.Connection:
-    """A connection to the database named by `config.DB_TARGET` ("local" or "aurora").
+def connect(schema: str | None = None, target: str | None = None) -> psycopg.Connection:
+    """A connection to the database named by `target`, or by `config.DB_TARGET` when it is None ("local" or
+    "aurora"). Naming the target lets one process hold both, as the cache copy does.
 
     Each statement commits on its own unless inside `conn.transaction()`. `schema` puts that schema first on the
     search path, so the tables are created and read there (used by tests).
     """
-    if config.DB_TARGET == "local":
+    target = config.DB_TARGET if target is None else target
+    if target == "local":
         conn = psycopg.connect(
             host=config.PG_HOST, port=config.PG_PORT, user=config.PG_USER, dbname=config.PG_DATABASE,
             password=config.PG_PASSWORD, connect_timeout=5, autocommit=True,
         )
-    elif config.DB_TARGET == "aurora":
+    elif target == "aurora":
         conn = _connect_aurora()
     else:
-        raise ValueError(f"DB_TARGET must be 'local' or 'aurora', not {config.DB_TARGET!r}")
+        raise ValueError(f"the database target (DB_TARGET or `target`) must be 'local' or 'aurora', not {target!r}")
     if schema is not None:
         try:
             use_schema(conn, schema)
@@ -223,6 +225,29 @@ def store_embeddings(conn: psycopg.Connection, model: str, vectors: dict) -> Non
             """,
             rows,
         )
+
+
+def embedding_rows(conn: psycopg.Connection, after: tuple[str, str] | None = None,
+                   limit: int = 500) -> list[tuple[str, str, str]]:
+    """One page of `embedding_cache` as (text_sha256, model, vector as text), in primary key order, starting
+    after the (text_sha256, model) key `after`. Pass the last row's first two values to get the next page."""
+    if after is None:
+        query, params = "", {"limit": limit}
+    else:
+        query, params = "WHERE (text_sha256, model) > (%(hash)s, %(model)s)", {
+            "hash": after[0], "model": after[1], "limit": limit}
+    rows = conn.execute(
+        "SELECT text_sha256, model, embedding::text FROM embedding_cache " + query
+        + " ORDER BY text_sha256, model LIMIT %(limit)s",
+        params,
+    ).fetchall()
+    return [tuple(row) for row in rows]
+
+
+def embedding_counts(conn: psycopg.Connection) -> dict[str, int]:
+    """Model setup -> number of vectors in `embedding_cache`."""
+    rows = conn.execute("SELECT model, count(*) FROM embedding_cache GROUP BY model ORDER BY model").fetchall()
+    return dict(rows)
 
 
 def cached_rerank_scores(conn: psycopg.Connection, question_sha256: str, hashes: list[str],
@@ -445,6 +470,11 @@ def create_test_schema(conn: psycopg.Connection, name: str) -> None:
 
 def drop_test_schema(conn: psycopg.Connection, name: str) -> None:
     conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(_test_schema(name)))
+
+
+def database_size(conn: psycopg.Connection) -> int:
+    """Size of the whole current database in bytes (the Aurora Free plan allows 1 GB)."""
+    return conn.execute("SELECT pg_database_size(current_database())").fetchone()[0]
 
 
 def server_info(conn: psycopg.Connection) -> dict:

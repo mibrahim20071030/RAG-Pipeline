@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 3 (load the data into Aurora), in plan mode, when the human says so.
+- Next: Cycle 2 step 4 (Lambda), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -187,6 +187,12 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - `rag-aurora-smoke` now holds only `rds-db:connect` for `rag_app`.
   - Gotcha found while dropping the role: on Aurora, `postgres` is `rds_superuser`, not a superuser. In PG16+, `DROP OWNED BY` needs membership of the role, so run `GRANT <role> TO postgres;` first.
   - `aurora_smoke.py direct` passed after the cleanup.
+- Cycle 2 step 3 (load the data into Aurora): BUILT on 2026-10-17 (single agent), waiting for the human's PR. Results are in `runs/aurora_load.md`. No Bedrock call was made.
+  - In Aurora: the 4 `documents`, the 797 `fixed_400_prefix` chunks (the frozen strategy only; the experiments stay local), and all 3,486 vectors of `embedding_cache` (so the load made no Titan call; the 49 question vectors are in it). `rerank_cache` was not copied, so step 7 measures real rerank latency and cost. Aurora's database is 38 MB.
+  - Checks: the loader's dry run said 0 paid calls; `show_db --strategy fixed_400_prefix` OK with 1024 dims; a second load kept 797; `scripts/compare_targets.py` gave the same 30 hybrid candidates for 49 of 49 questions on both databases.
+  - Files: `rag/db.py` (`connect(schema=None, target=None)`, where `target` overrides `DB_TARGET`; `embedding_rows`, `embedding_counts`, `database_size`), `rag/copy_cache.py` (`copy_embeddings`; `python -m rag.copy_cache [--run]` copies local to Aurora, only missing rows), `scripts/show_db.py` (`--strategy`, repeatable; prints cache counts and size), `scripts/compare_targets.py`, `tests/test_copy_cache.py`, 3 tests in `tests/test_db_connect.py`.
+  - End to end on Aurora (paid, $0.0023): q01 answered 35 V citing LM35 page 4; search 312 ms, rerank 1,315 ms, answer 690 ms.
+  - To reload Aurora from scratch: `python -m rag.copy_cache --run`, then with `DB_TARGET=aurora`, `python -m rag.load --strategy fixed_400_prefix --run`.
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -500,7 +506,7 @@ Order of work, each with a test written when the step starts:
 
 1. **Aurora smoke test (first step). DONE 2026-10-16, see Current status.** Original plan: create an Aurora PostgreSQL Serverless v2 cluster on the Free plan with minimum capacity 0 ACU. Enable the Data API. Run `CREATE EXTENSION vector`. If pgvector, minimum 0 ACU, or the Data API do not work on this account, switch to the RDS db.t4g.micro fallback and note the cost.
 2. **Data access layer. BUILT 2026-10-17, see Current status.** `db.connect()` reaches Aurora directly with an IAM token (`DB_TARGET=aurora`); no Data API backend. The Layer 3 and 4 database tests pass on both targets.
-3. **Load the data.** Load chunks and vectors into Aurora, using batch statements. Confirm row counts and vector dimensions.
+3. **Load the data. BUILT 2026-10-17, see Current status.** `fixed_400_prefix` (797 rows) and the whole `embedding_cache` are in Aurora; counts, dims and all 49 search results match the local database.
 4. **Lambda.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
 5. **API Gateway.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
 6. **Frontend.** The page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
