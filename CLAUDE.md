@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: the human's PR for Cycle 2 step 6; then step 7 (Deployed evaluation), in plan mode, when the human says so.
+- Next: Cycle 2 step 7 (Deployed evaluation), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -210,7 +210,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Measured: the `/api/ask` throttle (0.05/s, burst 3) is loose, 20 of 28 requests got through in 60 s, because API Gateway's hosts count separately. The human accepted it as best effort, so the daily cap is the exact spend guard. The console cannot create per-route throttles; they were set with `aws apigatewayv2 update-stage --route-settings` in CloudShell (one line). Two of 12 simultaneous requests got a 503 from API Gateway with no Lambda log line, most likely the 10-run concurrency limit (not confirmed).
   - A Bedrock throttle gives the cap's place back (`db.release_daily_ask`); the daily-limit 429 body has `"limit": "daily"`.
   - Left for step 6: the page's `fetch` and PDF links, the real CORS origin, and showing API Gateway's own error bodies (`{"message": ...}`, no `error` field).
-- Cycle 2 step 6 (Frontend): BUILT and TESTED on 2026-10-18 (single agent), waiting for the human's PR.
+- Cycle 2 step 6 (Frontend): DONE on 2026-10-18 (single agent), merged as PR #17 (`a811170`).
   - Results are in `datasheet-rag/runs/frontend_deploy.md`. The distribution `datasheet-rag-web` is on pay-as-you-go with WAF off. `SITE_URL` is in `.env`.
   - The free checks passed through CloudFront, and so did one paid ask ($0.0003). The human checked in a browser that "Open page" opens the vendor PDF.
   - Code review done and recorded (1 of 2), 5 of 8 fixed. Deployed (`config.DEPLOYED`), `_pdf_url` never gives a local copy. 722 tests pass without Docker.
@@ -546,7 +546,7 @@ Order of work, each with a test written when the step starts:
 3. **Load the data. DONE 2026-10-17 (PR #14), see Current status.** `fixed_400_prefix` (797 rows) and the whole `embedding_cache` are in Aurora; counts, dims and all 49 search results match the local database.
 4. **Lambda. DONE 2026-10-17 (PR #15), see Current status.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
 5. **API Gateway. DONE 2026-10-17 (PR #16), see Current status.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
-6. **Frontend.** The page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
+6. **Frontend. DONE 2026-10-18 (PR #17), see Current status.** CloudFront with a private S3 bucket (OAC); `/api/*` through CloudFront to API Gateway; PDF links to the vendors' copies. Original plan: the page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
 7. **Deployed evaluation.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
 8. **Knowledge Base comparison (added 2026-10-16).** Build a second RAG pipeline with Amazon Bedrock Knowledge Bases, using an S3 Vectors vector store, and compare it with our pipeline. It gets its own plan in plan mode; split it into smaller steps there if needed. What is known so far:
    - Fair comparison: same 4 PDFs, same 49 frozen questions, and the same models where the KB allows them (Titan V2 1024, Cohere Rerank 3.5, Nova Lite) (VERIFY that the KB accepts each one). Change one thing at a time.

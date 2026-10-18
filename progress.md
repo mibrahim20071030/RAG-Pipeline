@@ -32,7 +32,8 @@ Next session (Cycle 2):
 - [x] 2026-10-18: decided option A: the datasheet list is written into the page, so a visit no longer wakes Aurora.
 - [x] 2026-10-18: option A `index.html` uploaded (14:55:50 UTC) and invalidated; Claude checked that the page CloudFront serves is byte for byte the local file.
 - [x] 2026-10-18: Docker started; the full tests pass (932).
-- [ ] Open the step 6 PR.
+- [x] 2026-10-18: step 6 PR merged (#17, `a811170`).
+- [ ] Say when to start Cycle 2 step 7 (Deployed evaluation), in plan mode.
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
@@ -124,7 +125,7 @@ Cycle 2 (deploy, UI, report):
 - [x] 3. Load chunks and vectors into Aurora. Done on 2026-10-17 (`runs/aurora_load.md`); PR #14 merged.
 - [x] 4. Lambda. Done on 2026-10-17 (`runs/lambda_deploy.md`); PR #15 merged.
 - [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
-- [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
+- [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
