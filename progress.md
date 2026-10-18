@@ -20,9 +20,10 @@ Next session (Cycle 2):
 - [x] 2026-10-17: step 4 PR merged (#15, `3802ca5`).
 - [x] 2026-10-17: Cycle 2 step 5 plan approved (HTTP API; reranker kept and `/api/ask` throttled to 1 per 20 s, burst 3; daily cap of 300 questions counted in Aurora).
 - [x] 2026-10-17: step 5 console work done and the deployed tests passed (CORS fixed on the second try).
-- [ ] Set `API_DAILY_ASK_LIMIT` back to `300` in the Lambda, if not done yet.
-- [ ] Upload the rebuilt `datasheet-raguild\lambda.zip` (review fixes) to the Lambda and click Save (about 22.7 MB).
-- [ ] Open and merge the step 5 PR.
+- [x] 2026-10-17: `API_DAILY_ASK_LIMIT` set back to `300`.
+- [x] 2026-10-17: rebuilt zip uploaded (22,686,478 bytes, checked); `documents` 200.
+- [x] 2026-10-17: step 5 PR merged (#16, `e0ac474`).
+- [ ] Say when to start Cycle 2 step 6 (Frontend), in plan mode.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
@@ -112,7 +113,7 @@ Cycle 2 (deploy, UI, report):
 - [x] 2. Data access layer: direct IAM-token connection (no Data API); the Layer 3 and 4 database tests pass on Aurora. PR #13 merged.
 - [x] 3. Load chunks and vectors into Aurora. Done on 2026-10-17 (`runs/aurora_load.md`); PR #14 merged.
 - [x] 4. Lambda. Done on 2026-10-17 (`runs/lambda_deploy.md`); PR #15 merged.
-- [x] 5. API Gateway. Built and tested on 2026-10-17 (`runs/api_gateway.md`); PR pending.
+- [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
 - [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
@@ -144,7 +145,8 @@ Cycle 2 (deploy, UI, report):
 - CORS fixed by the human and re-tested: allow headers for `http://localhost:8000`, none for another origin. The human found the 429 lines in the access log.
 - Paid checks (approved): the question "What is the maximum supply voltage of the LM35?" got 200, "30 V", LM35 page 4, in 3.68 s. It cost $0.0023, not $0.0003, because Claude left out "absolute" from the frozen q01 text, so nothing was cached. 30 V is the recommended operating maximum (the absolute maximum is 35 V). With `API_DAILY_ASK_LIMIT=1`, the same question got 429 `DAILY_LIMIT` with no cost lines in the Lambda log; the human sets it back to 300. Step 5 spend: $0.0023.
 - Code review done and recorded (1 of 2). 4 of 8 findings fixed: a Bedrock throttle gives the cap's place back (`db.release_daily_ask`), the daily-limit 429 has `"limit": "daily"` for the page, no f-string SQL, `--count` must be 1 or more. 924 tests pass. `build/lambda.zip` rebuilt (22,686,478 bytes).
-- Open: the human uploads the new zip and resets the limit to 300, then opens the PR. (free ones first, then q01 and the daily-cap check, under $0.001), the code review and the PR.
+- The human uploaded the new zip (size checked: 22,686,478 bytes), set the limit back to 300, and merged PR #16 (`e0ac474`); CI passed.
+- Open: Cycle 2 step 6 (Frontend), in plan mode, when the human says so. (free ones first, then q01 and the daily-cap check, under $0.001), the code review and the PR.
 
 ## 2026-10-17 — Session 16: Cycle 2 step 4 (Lambda), code built, waiting for the console work
 
