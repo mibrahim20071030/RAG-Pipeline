@@ -18,7 +18,12 @@ Next session (Cycle 2):
 - [x] 2026-10-17: zip re-uploaded; the deployed tests passed ($0.0026).
 - [x] 2026-10-17: zip re-uploaded and the Bedrock timeout variables added; the re-test passed.
 - [x] 2026-10-17: step 4 PR merged (#15, `3802ca5`).
-- [ ] Say when to start Cycle 2 step 5 (API Gateway), in plan mode.
+- [x] 2026-10-17: Cycle 2 step 5 plan approved (HTTP API; reranker kept and `/api/ask` throttled to 1 per 20 s, burst 3; daily cap of 300 questions counted in Aurora).
+- [x] 2026-10-17: step 5 console work done and the deployed tests passed (CORS fixed on the second try).
+- [ ] Set `API_DAILY_ASK_LIMIT` back to `300` in the Lambda, if not done yet.
+- [ ] Upload the rebuilt `datasheet-raguild\lambda.zip` (review fixes) to the Lambda and click Save (about 22.7 MB).
+- [ ] Open and merge the step 5 PR.
+- [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
 - [x] 2026-10-14: branch `layer-8b-UI` deleted on GitHub (by the human) and locally (by Claude).
 - [ ] First thing: find the test that hung during the pre-commit run (see the end of Session 10b).
@@ -106,13 +111,40 @@ Cycle 2 (deploy, UI, report):
 - [x] 1. Aurora smoke test. Passed on 2026-10-16 (`runs/aurora_smoke.md`), PR #12 merged.
 - [x] 2. Data access layer: direct IAM-token connection (no Data API); the Layer 3 and 4 database tests pass on Aurora. PR #13 merged.
 - [x] 3. Load chunks and vectors into Aurora. Done on 2026-10-17 (`runs/aurora_load.md`); PR #14 merged.
-- [ ] 4. Lambda: package the pipeline and `handler.py` with an IAM role, concurrency cap and Aurora-resume retry. Check which Python versions Lambda supports first.
-- [ ] 5. API Gateway: route, throttling, daily cap, input and output limits, CORS.
+- [x] 4. Lambda. Done on 2026-10-17 (`runs/lambda_deploy.md`); PR #15 merged.
+- [x] 5. API Gateway. Built and tested on 2026-10-17 (`runs/api_gateway.md`); PR pending.
 - [ ] 6. Frontend: host the existing `web/index.html` in S3, and point its `fetch` calls at the API Gateway URL.
 - [ ] 7. Deployed evaluation: latency (including cold starts) and cost per query.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
 - [ ] 9. Evaluation report (including the comparison) and recorded demo.
 - [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-17 — Session 17: Cycle 2 step 5 (API Gateway), code built, waiting for the console work
+
+- Plan approved by the human. Decisions:
+  - **HTTP API**, not REST. Verified in the AWS docs: per-route token-bucket throttling with a fractional rate, a 30 s integration timeout that cannot be raised, no usage plans or quotas, and CORS preflights answered by API Gateway.
+  - **The reranker stays on.** `POST /api/ask` is throttled to rate 0.05 (one every 20 s), burst 3, to match the 3-a-minute Rerank quota. `GET /api/documents` and the stage default get rate 1, burst 5.
+  - **A daily cap of 300 questions per UTC day, counted in Aurora.** AWS says REST usage-plan quotas must not be relied on to control costs. Worst case about $0.70 a day.
+  - CORS origin `http://localhost:8000` as a placeholder. The browser test from the real page moves to step 6.
+- Built:
+  - `rag/db.py`: table `api_usage (day, asks)`, `take_daily_ask(conn, limit, day=None)` (one atomic upsert that refuses at the limit), `daily_asks`.
+  - `rag/config.py`: `API_DAILY_ASK_LIMIT` from the environment (0, off, locally).
+  - `rag/api.py`: `ask` counts a question only after every check passes, and answers 429 `DAILY_LIMIT` when the cap is reached (503 if the database is lost while counting).
+  - `scripts/call_api.py`: `documents`, `ask --yes`, `cors`, `limits`, `throttle`, `usage`, with no AWS key except `usage`.
+  - 10 new tests (3 in `tests/test_db.py`, 7 in `tests/test_api.py`). 921 tests pass.
+- `api_usage` created on Aurora with `db.create_schema` (free). `build/lambda.zip` rebuilt (22,686,211 bytes).
+- Console steps for the human are in `datasheet-rag/runs/api_gateway.md`. `CLAUDE.md` updated: step 5 status, and the API and its access log group added to the teardown checklist.
+- At the human's request, `runs/api_gateway.md` now walks through each page of the HTTP API "Build" wizard (integrations, routes, stages, review).
+- Console finding: the HTTP API Throttling page can set the stage's default route throttling, but not per-route limits ("Use the CLI or an SDK to create custom route settings"). The two route limits are set with `aws apigatewayv2 update-stage --route-settings` in CloudShell, run by the human; `runs/api_gateway.md` step 4 updated. The first try, pasted as two lines joined by `\`, failed with "Unknown options: {...}"; the guide now gives it as one line, plus a `get-stage` check. The CORS table in the guide now lists Expose-Headers as empty.
+- Console work done by the human (HTTP API `datasheet-rag-api`, routes, throttling via CloudShell, CORS, access logs, `API_URL` in `.env`). Free deployed tests, details in `datasheet-rag/runs/api_gateway.md`:
+  - documents 200 (19.65 s with an Aurora resume); unknown route and wrong method 404 from API Gateway; 501 characters 400, 20 KB 413, form body 415;
+  - CORS saved with an empty allow list (values typed but not added with **Add**); the human is fixing it;
+  - the `/api/ask` throttle (0.05/s, burst 3, stored correctly per `get-stage`) is loose: 20 of 28 requests got through in 60 s. The human chose to accept it as best effort, so the daily cap of 300 is the exact spend guard;
+  - 2 of 12 simultaneous `documents` requests got 503 from API Gateway with no Lambda log line, most likely the account's 10-run concurrency limit (not confirmed).
+- CORS fixed by the human and re-tested: allow headers for `http://localhost:8000`, none for another origin. The human found the 429 lines in the access log.
+- Paid checks (approved): the question "What is the maximum supply voltage of the LM35?" got 200, "30 V", LM35 page 4, in 3.68 s. It cost $0.0023, not $0.0003, because Claude left out "absolute" from the frozen q01 text, so nothing was cached. 30 V is the recommended operating maximum (the absolute maximum is 35 V). With `API_DAILY_ASK_LIMIT=1`, the same question got 429 `DAILY_LIMIT` with no cost lines in the Lambda log; the human sets it back to 300. Step 5 spend: $0.0023.
+- Code review done and recorded (1 of 2). 4 of 8 findings fixed: a Bedrock throttle gives the cap's place back (`db.release_daily_ask`), the daily-limit 429 has `"limit": "daily"` for the page, no f-string SQL, `--count` must be 1 or more. 924 tests pass. `build/lambda.zip` rebuilt (22,686,478 bytes).
+- Open: the human uploads the new zip and resets the limit to 300, then opens the PR. (free ones first, then q01 and the daily-cap check, under $0.001), the code review and the PR.
 
 ## 2026-10-17 — Session 16: Cycle 2 step 4 (Lambda), code built, waiting for the console work
 

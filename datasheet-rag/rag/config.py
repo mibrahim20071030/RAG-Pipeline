@@ -144,6 +144,8 @@ SERVER_HOST = "127.0.0.1"  # never 0.0.0.0: anyone who can reach the server can 
 SERVER_PORT = 8000
 API_MAX_QUESTION_CHARS = 500
 API_MAX_BODY_BYTES = 10_000
+# Questions answered per UTC day before /api/ask says "try tomorrow" (Cycle 2 step 5). 0 is off; Lambda sets 300.
+API_DAILY_ASK_LIMIT = int(os.environ.get("API_DAILY_ASK_LIMIT") or "0")
 
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")

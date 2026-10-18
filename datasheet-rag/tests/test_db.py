@@ -4,6 +4,8 @@ Everything runs in a throwaway schema (the `conn` fixture in conftest.py) with a
 rows are never touched and no test calls AWS.
 """
 
+from datetime import date
+
 import psycopg
 import pytest
 
@@ -183,3 +185,36 @@ def test_vector_text_round_trip(conn):
 def test_only_a_test_schema_can_be_dropped(conn):
     with pytest.raises(ValueError):
         db.drop_test_schema(conn, "public")
+
+
+# ---------------------------------------------------------------- the daily question cap (Cycle 2 step 5)
+
+def test_daily_cap_counts_up_to_the_limit_then_refuses(conn):
+    assert db.daily_asks(conn) == 0
+    assert [db.take_daily_ask(conn, 3) for _ in range(3)] == [1, 2, 3]
+    assert db.take_daily_ask(conn, 3) is None
+    assert db.take_daily_ask(conn, 3) is None
+    assert db.daily_asks(conn) == 3  # a refused question is not counted
+
+
+def test_daily_cap_starts_again_on_another_day(conn):
+    yesterday, today = date(2026, 10, 16), date(2026, 10, 17)
+    assert db.take_daily_ask(conn, 1, day=yesterday) == 1
+    assert db.take_daily_ask(conn, 1, day=yesterday) is None
+    assert db.take_daily_ask(conn, 1, day=today) == 1
+    assert db.daily_asks(conn, day=yesterday) == 1 and db.daily_asks(conn, day=today) == 1
+
+
+def test_a_raised_limit_lets_more_through(conn):
+    assert db.take_daily_ask(conn, 1) == 1
+    assert db.take_daily_ask(conn, 1) is None
+    assert db.take_daily_ask(conn, 2) == 2
+
+
+def test_a_released_place_can_be_taken_again_and_never_goes_below_zero(conn):
+    assert db.take_daily_ask(conn, 1) == 1
+    db.release_daily_ask(conn)
+    assert db.daily_asks(conn) == 0
+    db.release_daily_ask(conn)
+    assert db.daily_asks(conn) == 0
+    assert db.take_daily_ask(conn, 1) == 1

@@ -202,6 +202,14 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Settings Lambda sets in its environment (defaults unchanged locally): `RAG_RUNS_DIR=/tmp/runs`, `BEDROCK_MAX_ATTEMPTS=2` (new setting), `RERANK_MIN_INTERVAL_S=0`, `AURORA_CONNECT_ATTEMPTS=1`, `AURORA_CONNECT_TIMEOUT_S=22`.
   - Verified: psycopg-binary 3.3.6 has a cp314 manylinux wheel, so the runtime is `python3.14`; the zip ran in `public.ecr.aws/lambda/python:3.14` against the local database.
   - Decisions: the dev user gets `lambda:InvokeFunction` on this function (Claude runs the deployed tests); the deployed function writes to the Aurora caches.
+- Cycle 2 step 5 (API Gateway): BUILT and TESTED on 2026-10-17 (single agent), waiting for the human's PR; console steps, results and findings in `datasheet-rag/runs/api_gateway.md`. Spend $0.0023. Code review done and recorded (1 of 2), 4 of 8 fixed; 924 tests pass.
+  - Decisions: HTTP API `datasheet-rag-api` (payload 2.0, `$default` stage, routes `POST /api/ask` and `GET /api/documents` only). Throttling: `/api/ask` rate 0.05, burst 3 (the Rerank quota, reranker stays on); `/api/documents` and the stage default rate 1, burst 5. CORS origin `http://localhost:8000` until step 6. Access logs to `datasheet-rag-api-access`.
+  - Verified in the AWS docs on 2026-10-17: HTTP API throttling is per stage and route, and the rate is a decimal; the integration timeout is at most 30 s and fixed; HTTP APIs have no usage plans or quotas; AWS says REST usage-plan quotas must not be relied on to control costs; with CORS set, API Gateway answers `OPTIONS` and ignores the backend's CORS headers.
+  - Daily cap in our code: table `api_usage (day, asks)`, `db.take_daily_ask(conn, limit, day=None)` (one atomic upsert, None at the limit), `db.daily_asks`. `api.ask` counts only a request that passed every check, and answers 429 `api.DAILY_LIMIT` at the cap. `config.API_DAILY_ASK_LIMIT` from the environment: 0 (off) locally, 300 in Lambda. `api_usage` already exists on Aurora.
+  - `scripts/call_api.py` (`documents`, `ask --yes`, `cors`, `limits`, `throttle`, `usage`) calls the API at `API_URL` from `datasheet-rag\.env`. 921 tests pass.
+  - Measured: the `/api/ask` throttle (0.05/s, burst 3) is loose, 20 of 28 requests got through in 60 s, because API Gateway's hosts count separately. The human accepted it as best effort, so the daily cap is the exact spend guard. The console cannot create per-route throttles; they were set with `aws apigatewayv2 update-stage --route-settings` in CloudShell (one line). Two of 12 simultaneous requests got a 503 from API Gateway with no Lambda log line, most likely the 10-run concurrency limit (not confirmed).
+  - A Bedrock throttle gives the cap's place back (`db.release_daily_ask`); the daily-limit 429 body has `"limit": "daily"`.
+  - Left for step 6: the page's `fetch` and PDF links, the real CORS origin, and showing API Gateway's own error bodies (`{"message": ...}`, no `error` field).
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -517,7 +525,7 @@ Order of work, each with a test written when the step starts:
 2. **Data access layer. BUILT 2026-10-17, see Current status.** `db.connect()` reaches Aurora directly with an IAM token (`DB_TARGET=aurora`); no Data API backend. The Layer 3 and 4 database tests pass on both targets.
 3. **Load the data. DONE 2026-10-17 (PR #14), see Current status.** `fixed_400_prefix` (797 rows) and the whole `embedding_cache` are in Aurora; counts, dims and all 49 search results match the local database.
 4. **Lambda. DONE 2026-10-17 (PR #15), see Current status.** Package the pipeline and `handler.py`. Use an IAM role for Bedrock, the Data API, and S3 read. No access keys. Set a memory size, timeout, and a reserved concurrency cap. Add retry logic for the first query after Aurora resumes from a pause. Cold-start the function and record the time.
-5. **API Gateway.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
+5. **API Gateway. BUILT and TESTED 2026-10-17, see Current status.** Create the route, throttling (requests per second and a daily cap), a maximum question length, and a maximum output token count. Configure CORS for the S3 page origin. Test with `curl` and then from the page.
 6. **Frontend.** The page already exists (`datasheet-rag/web/index.html`, Layer 8b): question box, datasheet dropdown, answer with `[n]` links, and source cards with PDF links. Host it as a static website in S3 (VERIFY the current public-hosting setup) and point its `fetch` calls at the API Gateway URL. Decide where the PDF links point: the PDFs are vendor-copyrighted, so they are not public in S3 without checking. The page contains no secrets.
 7. **Deployed evaluation.** Run the final strategy against the deployed endpoint. Record latency (including cold starts and Aurora resume) and cost per query.
 8. **Knowledge Base comparison (added 2026-10-16).** Build a second RAG pipeline with Amazon Bedrock Knowledge Bases, using an S3 Vectors vector store, and compare it with our pipeline. It gets its own plan in plan mode; split it into smaller steps there if needed. What is known so far:
@@ -530,13 +538,13 @@ Order of work, each with a test written when the step starts:
 
 ### Teardown checklist
 
-- Delete the API Gateway API and the Lambda function and its role (`datasheet-rag-lambda`). Remove the dev user's inline policy `rag-lambda-invoke`.
+- Delete the API Gateway API (`datasheet-rag-api`) and the Lambda function and its role (`datasheet-rag-lambda`). Remove the dev user's inline policy `rag-lambda-invoke`.
 - Empty and delete the S3 buckets (page and PDFs).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
 - Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)
 - Remove the inline policy `rag-aurora-smoke` from the dev IAM user (if the user itself is not deleted first).
 - Delete the IAM user and its access keys.
-- Check CloudWatch log groups, and delete them.
+- Check CloudWatch log groups (including `datasheet-rag-api-access` and `/aws/lambda/datasheet-rag`), and delete them.
 - Check Billing and Cost Management the next day and a week later. Confirm no new charges.
 - Remember the Free plan lasts 6 months from sign-up (about early April 2027; confirm the exact date in Billing). Projects 3 and 5 must be planned inside that window or the account must be upgraded.
 
