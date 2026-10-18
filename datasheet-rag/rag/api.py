@@ -17,6 +17,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 from rag import config, costlog, db, generate, pipeline
 
 NO_DATABASE = "Cannot reach Postgres. Start Docker Desktop, then run: docker start rag-pg"
+# The same failures as seen by a visitor of the deployed page (config.DEPLOYED), with no local-machine hints.
+DATABASE_WAKING = ("The database did not answer. It pauses when idle and takes about 20 seconds to wake up: "
+                   "ask again in 20 seconds.")
+AWS_FAILED = "The answer service could not reach the AI models ({detail}). Try again later."
+
+
+def no_database() -> str:
+    return DATABASE_WAKING if config.DEPLOYED else NO_DATABASE
 
 
 def _error(status: int, message: str) -> tuple[int, dict]:
@@ -42,6 +50,8 @@ def _bedrock_error(error: Exception) -> tuple[int, dict]:
     if code in ("ThrottlingException", "TooManyRequestsException"):
         return _error(429, "AWS is limiting calls right now (the reranker allows 3 a minute). "
                            "Wait a minute and ask again.")
+    if config.DEPLOYED:
+        return _error(502, AWS_FAILED.format(detail=code or type(error).__name__))
     if code == "AccessDeniedException":
         return _error(502, "AWS refused the call: the local AWS user needs bedrock:InvokeModel and bedrock:Rerank "
                            "on the project models.")
@@ -98,7 +108,7 @@ def ask(conn, payload, answer_fn=None) -> tuple[int, dict]:
     try:
         files = {row["name"]: row["file"] for row in db.list_documents(conn)}
     except psycopg.OperationalError:
-        return _error(503, NO_DATABASE)
+        return _error(503, no_database())
     if document is not None and document not in files:
         return _error(400, "Pick a datasheet from the list.")
 
@@ -108,7 +118,7 @@ def ask(conn, payload, answer_fn=None) -> tuple[int, dict]:
     except (ClientError, BotoCoreError) as error:
         return _bedrock_error(error)
     except psycopg.OperationalError:
-        return _error(503, NO_DATABASE)
+        return _error(503, no_database())
     except RuntimeError as error:
         # The reranker scored fewer documents than sent, or the answer model stopped for another reason.
         return _error(502, f"A step stopped without a usable answer: {error}")
