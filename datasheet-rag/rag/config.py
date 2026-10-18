@@ -47,11 +47,20 @@ EMBED_WORKERS = 4  # calls in flight at once; the model takes one text per reque
 EMBED_BATCH = 100  # texts per batch: one cost log row, and vectors are saved after each batch
 
 # The datasheets, by parsed name. `revision` is what the PDF prints on its first page.
+# url: the vendor's own copy, which the deployed page links to (the vendors do not allow copies to be republished).
+# Checked on 2026-10-18: the ESP32 and LM35 files are byte for byte ours. ST and Toshiba refuse scripted downloads,
+# so the human checked in a browser on 2026-10-18 that they are the same documents as ours. These addresses serve
+# the vendor's newest revision and nothing checks it: if a vendor publishes a new one, its page numbers may move, so
+# check again before relying on them, or set the url to None.
 DOCUMENTS = {
-    "DS_CD00237391": {"part": "STM32F205/207", "revision": "DS6329 Rev 18"},
-    "TCTH022BE_datasheet_en_20230425": {"part": "TCTH0xxxE", "revision": "Rev. 2.0.A"},
-    "esp32_datasheet_en": {"part": "ESP32", "revision": "Version 5.3"},
-    "lm35": {"part": "LM35", "revision": "SNIS159H"},
+    "DS_CD00237391": {"part": "STM32F205/207", "revision": "DS6329 Rev 18",
+                      "url": "https://www.st.com/resource/en/datasheet/stm32f205rb.pdf"},
+    "TCTH022BE_datasheet_en_20230425": {
+        "part": "TCTH0xxxE", "revision": "Rev. 2.0.A",
+        "url": "https://toshiba.semicon-storage.com/info/docget.jsp?did=149583&prodName=TCTH022BE"},
+    "esp32_datasheet_en": {"part": "ESP32", "revision": "Version 5.3",
+                           "url": "https://documentation.espressif.com/esp32_datasheet_en.pdf"},
+    "lm35": {"part": "LM35", "revision": "SNIS159H", "url": "https://www.ti.com/lit/ds/symlink/lm35.pdf"},
 }
 
 # Chunking. Size is counted in approximate tokens: characters divided by CHARS_PER_TOKEN, rounded up.

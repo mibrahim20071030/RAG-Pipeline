@@ -207,8 +207,14 @@ details.details summary:hover { color: var(--text-muted); }
           <div class="search-bar">
             <div class="select-wrap">
               <label class="visually-hidden" for="document">Datasheet</label>
+              <!-- The datasheets are written here, not fetched: loading the page then never wakes the paused database.
+                   Values and labels are config.DOCUMENTS names and parts (tests/test_page.py keeps them equal). -->
               <select id="document" name="document">
                 <option value="">All datasheets</option>
+                <option value="DS_CD00237391">STM32F205/207</option>
+                <option value="esp32_datasheet_en">ESP32</option>
+                <option value="lm35">LM35</option>
+                <option value="TCTH022BE_datasheet_en_20230425">TCTH0xxxE</option>
               </select>
               <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
             </div>
@@ -317,18 +323,20 @@ details.details summary:hover { color: var(--text-muted); }
     ask({ question, document: select.value || null });
   });
 
-  // ---------- datasheet list ----------
-  async function loadDocuments() {
-    try {
-      const response = await fetch("/api/documents");
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Could not load the datasheets.");
-      for (const doc of data) {
-        select.append(el("option", { value: doc.name, text: doc.part || doc.name }));
-      }
-    } catch (err) {
-      show(errorPanel(err.message || "Could not reach the server.", () => { show(intro); loadDocuments(); }));
-    }
+  // ---------- errors ----------
+  // Our API answers {"error": ...}. On AWS, API Gateway answers some requests itself with {"message": ...}
+  // (throttling, busy), and CloudFront sends an HTML page for a gateway error, so the status decides the words.
+  const BUSY = "The service is busy or waking up (the database sleeps when idle). Try again in about 20 seconds.";
+  async function readJson(response) {
+    try { return await response.json(); } catch { return null; }
+  }
+  // Only throttling and server-side failures are worth sending again; any other 4xx would fail the same way.
+  function failure(status, data) {
+    const retry = status === 429 ? !(data && data.limit === "daily") : status >= 500;
+    if (data && data.error) return { message: data.error, retry };
+    if (status === 429) return { message: "Too many questions right now. Wait a minute and ask again.", retry };
+    if (status >= 500) return { message: BUSY, retry };
+    return { message: (data && data.message) || `The server answered ${status}.`, retry };
   }
 
   // ---------- asking ----------
@@ -368,11 +376,11 @@ details.details summary:hover { color: var(--text-muted); }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      let data;
-      try { data = await response.json(); } catch { data = { error: `The server answered ${response.status} without JSON.` }; }
-      if (!response.ok) {
-        if (response.status === 400) { setError(data.error); show(intro); box.focus(); }
-        else show(errorPanel(data.error || `The server answered ${response.status}.`, () => ask(lastPayload)));
+      const data = await readJson(response);
+      if (!response.ok || !data) {
+        const { message, retry } = failure(response.ok ? 502 : response.status, data);
+        if (response.status === 400 && data && data.error) { setError(data.error); show(intro); box.focus(); }
+        else show(errorPanel(message, retry ? () => ask(lastPayload) : null));
       } else {
         show(answerPanel(payload.question, data));
       }
@@ -425,7 +433,7 @@ details.details summary:hover { color: var(--text-muted); }
         el("div", { class: "source-part", translate: "no", text: name }),
         el("div", { class: "source-page", text: `Page ${source.page}${printed}` }),
         source.pdf_url
-          ? el("a", { class: "source-link", href: source.pdf_url, target: "_blank", rel: "noopener",
+          ? el("a", { class: "source-link", href: source.pdf_url, target: "_blank", rel: "noopener noreferrer",
                       "aria-label": `Open ${name}, page ${source.page}, in a new tab` },
                "Open page", icon("external"))
           : null));
@@ -464,16 +472,19 @@ details.details summary:hover { color: var(--text-muted); }
     return el("div", { class: "answer-layout fade" }, answerCard, sourcesCard);
   }
 
+  // With no retry (the day's limit is reached), the panel has no button.
   function errorPanel(message, retry) {
-    const retryButton = el("button", { type: "button", class: "btn btn-light" }, icon("retry"), "Try again");
-    retryButton.addEventListener("click", retry);
+    let retryButton = null;
+    if (retry) {
+      retryButton = el("button", { type: "button", class: "btn btn-light" }, icon("retry"), "Try again");
+      retryButton.addEventListener("click", retry);
+    }
     return el("div", { class: "card error-card fade" },
       el("div", { class: "notice notice-danger", role: "alert" }, icon("alert"), el("p", { text: message }), retryButton));
   }
 
-  async function start() {
+  function start() {
     updateCount();
-    await loadDocuments();
     const params = new URLSearchParams(location.search);
     const question = (params.get("q") || "").trim().slice(0, MAX);
     if (!question) return;

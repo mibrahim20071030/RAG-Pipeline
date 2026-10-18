@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: Cycle 2 step 6 (Frontend), in plan mode, when the human says so.
+- Next: the human's PR for Cycle 2 step 6; then step 7 (Deployed evaluation), in plan mode, when the human says so.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -210,6 +210,26 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Measured: the `/api/ask` throttle (0.05/s, burst 3) is loose, 20 of 28 requests got through in 60 s, because API Gateway's hosts count separately. The human accepted it as best effort, so the daily cap is the exact spend guard. The console cannot create per-route throttles; they were set with `aws apigatewayv2 update-stage --route-settings` in CloudShell (one line). Two of 12 simultaneous requests got a 503 from API Gateway with no Lambda log line, most likely the 10-run concurrency limit (not confirmed).
   - A Bedrock throttle gives the cap's place back (`db.release_daily_ask`); the daily-limit 429 body has `"limit": "daily"`.
   - Left for step 6: the page's `fetch` and PDF links, the real CORS origin, and showing API Gateway's own error bodies (`{"message": ...}`, no `error` field).
+- Cycle 2 step 6 (Frontend): BUILT and TESTED on 2026-10-18 (single agent), waiting for the human's PR.
+  - Results are in `datasheet-rag/runs/frontend_deploy.md`. The distribution `datasheet-rag-web` is on pay-as-you-go with WAF off. `SITE_URL` is in `.env`.
+  - The free checks passed through CloudFront, and so did one paid ask ($0.0003). The human checked in a browser that "Open page" opens the vendor PDF.
+  - Code review done and recorded (1 of 2), 5 of 8 fixed. Deployed (`config.DEPLOYED`), `_pdf_url` never gives a local copy. 722 tests pass without Docker.
+  - After the review (the human's choice): the four datasheets are written into `web/index.html` as `<option>`s, so loading the page never calls `/api/documents` or wakes Aurora. `tests/test_page.py` keeps them equal to `config.DOCUMENTS`. 932 tests pass.
+  - The Toshiba `docget.jsp` link opens in the browser at `#page=N` (checked by the human).
+  - The option A page is live: the served `index.html` is byte for byte the local file (checked 2026-10-18). Ready for the human's PR. Step 6 spend $0.0003.
+  - Decisions (the human, 2026-10-18):
+    - **CloudFront with a private S3 bucket (OAC)**, not the S3 website endpoint, which is HTTP only and public only.
+    - **Same origin**: CloudFront's behavior `/api/*` goes to API Gateway (`CachingDisabled`, `AllViewerExceptHostHeader`), so the page keeps `fetch("/api/...")`. CORS on the API is cleared.
+    - **No PDFs in S3.** TI and Toshiba forbid reproduction in the datasheets' own text. "Open page" links to the vendor's copy.
+    - The human uploads in the console.
+  - Verified in the AWS docs on 2026-10-18: S3 website endpoints have no HTTPS; OAC needs a regular bucket endpoint, "Sign requests", and a bucket policy with `AWS:SourceArn`; the CloudFront flat-rate Free plan is $0 with no overage charges (1 M requests, 100 GB a month, 1 distribution, 5 cache behaviors).
+  - Vendor links: `config.DOCUMENTS[...]["url"]`. `api._pdf_url(name, file)` returns `/pdfs/<file>` when the PDF is on disk, then the vendor URL, then None. `rag/server.py` puts only `/pdfs/` paths on its allow-list.
+    - ESP32 and LM35 vendor files have the same SHA-256 as ours.
+    - ST and Toshiba refuse scripted downloads, so the human checks them in a browser (guide step 0).
+    - These vendor URLs serve the newest revision, so the page numbers can move if a vendor publishes a new one.
+  - `web/index.html`: reads API Gateway's `{"message"}` bodies; a daily-limit 429 has no retry button; a 5xx or a body that is not JSON (CloudFront's HTML error pages) gives a "busy or waking up" message; the datasheet list shows "Loading datasheets…".
+  - `scripts/call_api.py --base site` sends every command to `SITE_URL` (in `.env`), and the new command `page` checks the page and the http→https redirect.
+  - 721 tests pass without Docker (207 skipped). `build/lambda.zip` rebuilt (22,687,005 bytes).
 - The four datasheets are the final set. The human is on the bypass list of the `main` ruleset, so direct pushes of small changes work.
 - Done by the human already: four datasheet PDFs gathered, AWS Budget alerts set, AWS account created in early October 2026 on the Free plan.
 
@@ -539,7 +559,8 @@ Order of work, each with a test written when the step starts:
 ### Teardown checklist
 
 - Delete the API Gateway API (`datasheet-rag-api`) and the Lambda function and its role (`datasheet-rag-lambda`). Remove the dev user's inline policy `rag-lambda-invoke`.
-- Empty and delete the S3 buckets (page and PDFs).
+- Disable, then delete, the CloudFront distribution `datasheet-rag-web` (before its bucket), and its origin access control. Cancel the Free flat-rate plan if it is listed separately.
+- Empty and delete the S3 bucket `datasheet-rag-web-...` (the page; no PDFs are in S3).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
 - Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)
 - Remove the inline policy `rag-aurora-smoke` from the dev IAM user (if the user itself is not deleted first).
