@@ -135,7 +135,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Cycle 2 step 7b (cost fix): DONE on 2026-10-23 (single agent), deployed and checked, waiting for the human's PR.
+- Cycle 2 step 7b (cost fix): DONE on 2026-10-23 (single agent), deployed and checked, merged as PR #19 (`23161dc`).
   Console steps and results in `datasheet-rag/runs/cost_fix.md`. 799 tests pass; code review done and recorded
   (1 of 2), 9 of 10 fixed. The step 7 cost risk is closed.
   - Deployed checks (all passed, spend $0.0003): every refusal (404, 400, 413, 415) answered in under 0.3 s with no
@@ -151,7 +151,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     from `rag/db.py`; the table stays on Aurora, unused.
   - Cap 50 a day (`DEPLOYED_DAILY_LIMIT`). A full deployed eval (98 asks) needs it raised for that day.
   - DynamoDB on-demand checked on 2026-10-23: $0.625 per million writes, $0.125 per million reads; TTL deletes free.
-- Next: the human's PR for step 7b, then step 8 (the full Knowledge Base pipeline behind the same page, then both pipelines tested), then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Next: step 8 (the full Knowledge Base pipeline behind the same page, then both pipelines tested), then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
@@ -299,7 +299,9 @@ This file is the build plan. Read it fully before writing code. Work one layer a
 
 - Do not start building a layer until the human says to build it. Each layer starts in plan mode; build only after the human approves the plan. Finishing one layer is not permission to start the next.
 - When a build runs into an issue, explain it in simple language: what the issue is, why it is happening, and how to fix it.
-- Git, as set by the human on 2026-10-12. Layer builds: the human does the branch, commits, PR and merge; Claude says when the work is ready and lists the changed files. Small changes (edits to `.md` files, small fixes, tooling tweaks): Claude commits and pushes them straight to `main` with no PR, but only after telling the human what it wants to commit and getting a yes (added by the human on 2026-10-13; every commit needs its own yes). Before the commit, check `git status` for anything that must not be committed. If it is unclear whether a change is small, ask. The GitHub workflow also runs on a push to `main` unless the push only touches Markdown files.
+- Teach what was built (the human, 2026-10-23): after each feature, layer or step is built, walk the human through its code step by step, in detail and in simple language: what each file and function does, how the flow runs, why each decision was made, and how each AWS service involved works. The goal is that the human can explain and defend the work to employers.
+- A dedicated walkthrough session of the whole existing pipeline (Cycle 1 and Cycle 2 so far) is planned for a future session, at the human's request: files, functions, the flow from start to end, the decisions, and each AWS service.
+- Git, as set by the human on 2026-10-12. Layer builds: the human does the branch, commits, PR and merge; Claude says when the work is ready and lists the changed files. Small changes (edits to `.md` files, small fixes, tooling tweaks): Claude commits and pushes them straight to `main` with no PR, but only after telling the human what it wants to commit and getting a yes (added by the human on 2026-10-13; every commit needs its own yes). Before the commit, check `git status` for anything that must not be committed. If it is unclear whether a change is small, ask. The GitHub workflow also runs on a push to `main` unless the push only touches Markdown files. A commit that touches only `CLAUDE.md` and/or `progress.md` skips the tests (the human, 2026-10-23: they waste time): run the secret scan by hand, then `git commit --no-verify`, and push straight to `main` (the yes is still asked).
 - Hooks (added 2026-10-12):
   - `.githooks/pre-commit` runs `tools/checks.py --staged` before every commit: secret scan, `ruff`, `pytest`. A failure stops the commit. Enabled per clone with `git config core.hooksPath .githooks`. Needs `ruff` in the venv (`pip install ruff`).
   - `.claude/settings.json` has a Stop hook (`tools/review_gate.py`). When code has changed it runs the same checks and sends Claude back to fix failures. When they pass and the layer has not been reviewed, it asks for the code review.

@@ -44,8 +44,9 @@ Next session (Cycle 2):
 - [x] 2026-10-23: step 7b console work done (DynamoDB table with TTL, two inline policies, zip and three Lambda
   variables, `GET /api/documents` deleted, `USAGE_TABLE` in `.env`, page uploaded and invalidated).
 - [x] 2026-10-23: Claude's deployed checks for step 7b passed (6 of 6).
-- [ ] Branch, commit and PR for step 7b.
+- [x] 2026-10-23: step 7b PR merged (#19, `23161dc`).
 - [ ] Say when to start step 8 (KB pipeline) in plan mode.
+- [ ] Code walkthrough session of the whole pipeline (Cycle 1 and Cycle 2 so far), when the human picks the time.
 - [x] 2026-10-22: feedback loop decided: built after the step 8 comparison (Cycle 2 step 9), first on the KB pipeline (9a), then on our pipeline (9b).
 - [ ] In the step 9 plan: confirm review by local CLI (recommended) and DynamoDB for feedback (recommended).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
@@ -188,7 +189,11 @@ Cycle 2 (deploy, UI, report):
     (known from step 7). Fix: read the logs again a little later; it was there, with no `connect_ms`.
   - The step 7 cost risk is closed. Step 7b spend $0.0003. `CLAUDE.md` marks step 7b DONE (status and outline)
     and the step 7 cost risk closed.
-- Still open: the human's PR for step 7b; then step 8 in plan mode when the human says so.
+- Step 7b merged by the human as PR #19 (`23161dc`).
+- New rules from the human (written into `CLAUDE.md`): commits of only `CLAUDE.md`/`progress.md` skip the tests;
+  after each build, Claude teaches its code step by step in simple language; a future session walks through the
+  whole existing pipeline (files, functions, flow, decisions, AWS services) so the human can defend it to employers.
+- Still open: step 8 (KB pipeline) in plan mode when the human says so.
 
 ## 2026-10-22 — Session 20: review of the feedback-driven RAG design
 
