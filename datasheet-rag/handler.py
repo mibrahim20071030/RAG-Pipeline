@@ -3,11 +3,14 @@
 Lambda handler setting: handler.lambda_handler
 
 POST /api/ask        {"question": "...", "document": null | "<name>"} -> rag.api.ask
-GET  /api/documents  -> rag.api.documents
 
 Both API Gateway payload formats are read: HTTP API (version 2.0) and REST API (version 1.0); a stage name at the
-start of the path is ignored. CORS headers are API Gateway's job. Each request opens its own database connection
-and closes it before returning: Aurora does not pause while a connection is open, and a frozen container would
+start of the path is ignored. CORS headers are API Gateway's job.
+
+A request that will not be answered never reaches the database (Cycle 2 step 7b): the off switch
+(DEMO_ENABLED=false), the route, the body and the question are checked first, and the daily cap is counted in
+DynamoDB; only then does `rag.api.ask` open the connection. The log line has `connect_ms` only when it did.
+Each request that is answered opens its own database connection and closes it before returning: Aurora does not pause while a connection is open, and a frozen container would
 keep one open for as long as Lambda keeps the container. Each request prints one JSON line (route, status,
 timings, spend), so CloudWatch keeps what the cost log in /tmp loses when the container goes.
 """
@@ -22,7 +25,7 @@ import psycopg
 
 from rag import api, config, db
 
-ROUTES = {"/api/ask": "POST", "/api/documents": "GET"}
+ROUTES = {"/api/ask": "POST"}  # GET /api/documents was removed in step 7b: the page has the list written in
 
 
 def _request(event: dict) -> tuple[str, str, dict, str | bytes | None]:
@@ -71,13 +74,32 @@ def _payload(headers: dict, body) -> tuple[object, dict | None]:
         return None, _error(400, "The request body is not valid JSON.")
 
 
-def lambda_handler(event, context, connect=None, ask=None, documents=None) -> dict:
-    """One API Gateway request. `connect`, `ask` and `documents` replace the real ones in tests."""
-    connect, ask, documents = connect or db.connect, ask or api.ask, documents or api.documents
+@contextlib.contextmanager
+def _open_conn(connect, log: dict):
+    """A connection for one request, timed into the log line (`connect_ms`), closed when the request ends. A database
+    that does not answer is printed to the log and raised for `rag.api.ask` to turn into a 503."""
+    start = time.perf_counter()
+    try:
+        conn = connect()
+    except psycopg.OperationalError:
+        traceback.print_exc()
+        raise
+    finally:
+        log["connect_ms"] = round((time.perf_counter() - start) * 1000, 1)
+    try:
+        yield conn
+    finally:
+        with contextlib.suppress(Exception):  # a connection that is already broken may fail to close
+            conn.close()
+
+
+def lambda_handler(event, context, connect=None, ask=None) -> dict:
+    """One API Gateway request. `connect` and `ask` replace the real ones in tests."""
+    connect, ask = connect or db.connect, ask or api.ask
     start = time.perf_counter()
     log = {}
     try:
-        response = _handle(event if isinstance(event, dict) else {}, connect, ask, documents, log)
+        response = _handle(event if isinstance(event, dict) else {}, connect, ask, log)
     except Exception:  # noqa: BLE001 (any failure still gets an answer the page can show, and a log line)
         traceback.print_exc()
         response = _error(500, "The server hit an unexpected error. Its log has the details.")
@@ -87,7 +109,9 @@ def lambda_handler(event, context, connect=None, ask=None, documents=None) -> di
     return response
 
 
-def _handle(event, connect, ask, documents, log) -> dict:
+def _handle(event, connect, ask, log) -> dict:
+    if not config.DEMO_ENABLED:
+        return _response(503, {"error": api.DEMO_OFF, "off": True})
     try:
         method, path, headers, body = _request(event)
     except ValueError:
@@ -98,31 +122,10 @@ def _handle(event, connect, ask, documents, log) -> dict:
     if method != ROUTES[path]:
         return _error(405, f"Use {ROUTES[path]} for {path}.")
 
-    payload = None
-    if path == "/api/ask":
-        payload, error = _payload(headers, body)
-        if error:
-            return error
+    payload, error = _payload(headers, body)
+    if error:
+        return error
 
-    connect_start = time.perf_counter()
-    try:
-        conn = connect()
-    except psycopg.OperationalError:
-        traceback.print_exc()
-        return _error(503, api.no_database())
-    finally:
-        log["connect_ms"] = round((time.perf_counter() - connect_start) * 1000, 1)
-
-    try:
-        if path == "/api/documents":
-            return _response(200, documents(conn))
-        status, data = ask(conn, payload)
-    except psycopg.OperationalError:
-        traceback.print_exc()
-        return _error(503, api.no_database())
-    finally:
-        with contextlib.suppress(Exception):  # a connection that is already broken may fail to close
-            conn.close()
-
+    status, data = ask(payload, lambda: _open_conn(connect, log))
     log.update({key: data[key] for key in ("timings_ms", "spent_usd") if key in data})
     return _response(status, data)

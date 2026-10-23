@@ -38,7 +38,14 @@ Next session (Cycle 2):
 - [x] 2026-10-18: Aurora's `ServerlessDatabaseCapacity` read for 15:00–17:00 UTC (1.619 ACU-hours).
 - [ ] Optional: after a night with no calls, tell Claude so it can run one long-idle cold trial ($0.0003).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
-- [ ] Next session, first: decide how to close the cost risk (anyone can keep Aurora awake; options in `CLAUDE.md`, step 7).
+- [x] 2026-10-23: cost risk decided: fixes 1 to 5 (step 7b in `CLAUDE.md`).
+- [x] 2026-10-23: plan reordered: step 8 full KB pipeline with a toggle on the same page, then both tested; step 9 upload, then feedback, on both, then both tested again.
+- [x] 2026-10-23: step 7b plan approved (cap 50 a day, off switch as a Lambda variable); code built and reviewed.
+- [x] 2026-10-23: step 7b console work done (DynamoDB table with TTL, two inline policies, zip and three Lambda
+  variables, `GET /api/documents` deleted, `USAGE_TABLE` in `.env`, page uploaded and invalidated).
+- [x] 2026-10-23: Claude's deployed checks for step 7b passed (6 of 6).
+- [ ] Branch, commit and PR for step 7b.
+- [ ] Say when to start step 8 (KB pipeline) in plan mode.
 - [x] 2026-10-22: feedback loop decided: built after the step 8 comparison (Cycle 2 step 9), first on the KB pipeline (9a), then on our pipeline (9b).
 - [ ] In the step 9 plan: confirm review by local CLI (recommended) and DynamoDB for feedback (recommended).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
@@ -134,11 +141,54 @@ Cycle 2 (deploy, UI, report):
 - [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
 - [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
 - [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); PR #18 merged.
-- [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
-- [ ] 9a. Feedback loop on the Knowledge Base pipeline, after step 8's results are final (added 2026-10-22).
-- [ ] 9b. The same feedback loop on our pipeline.
+- [ ] 7b. Close the Aurora cost risk: check requests before connecting, delete `GET /api/documents`, daily counter in DynamoDB, lower cap, off switch (added 2026-10-23).
+- [ ] 8. Knowledge Base pipeline built in full behind the same page (toggle), then both pipelines tested on the 49 questions (added 2026-10-16, widened 2026-10-23).
+- [ ] 9a. PDF upload on both pipelines (added 2026-10-23).
+- [ ] 9b. Feedback loop on both pipelines (added 2026-10-22).
+- [ ] 9c. Both pipelines tested again.
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-23 — Session 21: plan for upload, KB pipeline and the cost fix; step 7b built
+
+- Nothing on AWS was touched.
+- The human asked how to add PDF upload to both pipelines. Explained: one `ingest_pdf` reusing parse, chunk and load; ingestion in the background because Titan's 60 a minute makes a datasheet take minutes (past API Gateway's 30 s); presigned S3 upload and an ingest Lambda when deployed; uploads private, out of the curated search, deleted after a TTL, and capped.
+- Decisions (the human):
+  - Step 8 builds the whole KB pipeline, identical to our hosted one, on the same page with a **toggle** (Ours / Knowledge Base); then both are tested and the results saved.
+  - Step 9 adds **upload first, then feedback**, to both pipelines, then tests both again (9a, 9b, 9c). This replaces the 2026-10-22 order (feedback on KB, then on ours).
+  - The Aurora cost risk is closed first, as step 7b, with fixes 1 to 5: check requests before connecting; delete `GET /api/documents` (reachable by anyone through `SITE_URL` or the `execute-api` address); daily counter in DynamoDB; lower cap; off switch.
+- `CLAUDE.md` updated: status "Next" and plan change, decisions table, Cycle 2 steps 7b, 8 and 9, teardown checklist, definition of done.
+- Step 7b (cost fix) planned and built (single agent), on the same day:
+  - Plan approved by the human: cap 50 a day, off switch as the Lambda variable `DEMO_ENABLED`.
+  - A `POST /api/ask` now goes: off switch, route, JSON, question checks (`api.check_ask`, datasheets from
+    `config.DOCUMENTS`), daily cap in DynamoDB (`rag/usage.py`, one conditional `UpdateItem` per question), and
+    only then Aurora. `api.ask(payload, open_conn, answer_fn=None, counter=None)` opens the connection itself.
+  - `GET /api/documents` removed from the Lambda (the local server keeps it). The Aurora counter (`api_usage`
+    functions) removed from `rag/db.py`; the table stays on Aurora, unused.
+  - Scripts: `call_api.py` lost `documents` and `cors`, `limits` checks more refusals, `usage` reads DynamoDB;
+    `invoke_lambda.py check` sends a free empty question; the deployed eval plan reads DynamoDB.
+  - New `tests/test_usage.py` (9); handler and API tests check that refused requests never connect.
+    799 tests pass (203 skipped: Docker was off).
+  - Code review done and recorded (1 of 2): 9 of 10 fixed (details in `datasheet-rag/runs/cost_fix.md`).
+  - Checked on the AWS pages: DynamoDB on-demand $0.625 per million writes, $0.125 per million reads (us-east-1);
+    the free tier covers provisioned capacity only; TTL deletes are free; DynamoDB is on the Free plan's list.
+  - Problem: the zip build stopped with "imports rag modules that are not packed: usage". Why: the build script
+    packs only the modules on its list. Fix: `usage` added to `RAG_MODULES` in `scripts/build_lambda.py`.
+    `build/lambda.zip` is 22,743,889 bytes.
+  - Problem: the chat's connection to the Claude service dropped once mid-reply ("API error"). Nothing in the
+    project was affected; work carried on.
+- Step 7b console work done by the human (CloudShell confirmed `RouteSettings` no longer lists `GET /api/documents`),
+  then Claude's deployed checks, all passed (details in `datasheet-rag/runs/cost_fix.md`):
+  - Refusals through `SITE_URL` (404, 400, 413, 415) in 0.13–0.30 s; `invoke_lambda.py check` 400 in 1.55 ms.
+  - No request line had `connect_ms`; the human saw `ServerlessDatabaseCapacity` stay at 0.
+  - Cap: with today's item set to 50, an ask got 429 `"daily"` and no connect; the count stayed 50.
+  - Off switch: 503 `"off"` through `SITE_URL` and the `execute-api` address.
+  - Paid: q01 (cached) 200 in 20.6 s with Aurora resuming, "35 V" citing LM35 page 4, $0.0003; count 1 of 50.
+  - Problem: the 429's log line was missing on the first look. Why: CloudWatch lines can take a minute to arrive
+    (known from step 7). Fix: read the logs again a little later; it was there, with no `connect_ms`.
+  - The step 7 cost risk is closed. Step 7b spend $0.0003. `CLAUDE.md` marks step 7b DONE (status and outline)
+    and the step 7 cost risk closed.
+- Still open: the human's PR for step 7b; then step 8 in plan mode when the human says so.
 
 ## 2026-10-22 — Session 20: review of the feedback-driven RAG design
 

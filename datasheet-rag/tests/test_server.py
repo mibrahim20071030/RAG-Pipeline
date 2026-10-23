@@ -7,7 +7,7 @@ import threading
 import psycopg
 import pytest
 
-from rag import server
+from rag import api, server
 
 
 class FakeConn:
@@ -30,7 +30,12 @@ def running(tmp_path):
         calls["connect"] += 1
         return FakeConn()
 
-    def ask(conn, payload):
+    def ask(payload, open_conn):
+        try:  # as rag.api.ask does: the connection is asked for, and a database that is down is a 503
+            with open_conn():
+                pass
+        except psycopg.OperationalError:
+            return 503, {"error": api.NO_DATABASE}
         calls["ask"].append(payload)
         if payload.get("question") == "crash":
             raise KeyError("output")

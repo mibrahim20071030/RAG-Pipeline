@@ -1,10 +1,11 @@
 """Call the deployed Lambda function with an API Gateway (HTTP API 2.0) event and print what came back.
 
-Run from datasheet-rag:  python scripts\\invoke_lambda.py documents
+Run from datasheet-rag:  python scripts\\invoke_lambda.py check
                          python scripts\\invoke_lambda.py ask "What is the maximum supply voltage of the LM35?"
                          python scripts\\invoke_lambda.py ask "..." --document lm35 --yes
 
-`documents` is free (one database read). `ask` makes paid Bedrock calls from the function: about $0.0023 for a new
+`check` is free: it sends an empty question, which the function refuses with a 400 before it touches the
+database (the log line has no connect_ms). `ask` makes paid Bedrock calls from the function: about $0.0023 for a new
 question, $0.0003 for one whose vector and rerank scores are already cached. Without --yes it prints that and stops.
 The function's cost log is in its /tmp, so the spend is read from the answer (`spent_usd`) and the CloudWatch line.
 """
@@ -34,7 +35,7 @@ def event(method: str, path: str, body: dict | None = None) -> dict:
 def main(argv: list[str]) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Invoke the deployed Lambda function once.")
-    parser.add_argument("route", choices=["documents", "ask"])
+    parser.add_argument("route", choices=["check", "ask"])
     parser.add_argument("question", nargs="?")
     parser.add_argument("--document", choices=list(config.DOCUMENTS))
     parser.add_argument("--yes", action="store_true", help="make the paid calls of `ask` without stopping first")
@@ -48,7 +49,7 @@ def main(argv: list[str]) -> None:
                      "Run again with --yes.")
         request = event("POST", "/api/ask", {"question": args.question, "document": args.document})
     else:
-        request = event("GET", "/api/documents")
+        request = event("POST", "/api/ask", {"question": ""})
 
     client = boto3.client("lambda", region_name=config.AWS_REGION)
     start = time.perf_counter()

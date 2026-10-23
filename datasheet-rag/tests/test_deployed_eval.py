@@ -103,6 +103,7 @@ def test_ask_with_retries_sends_once_when_attempts_is_0(monkeypatch):
     (504, None, "retry"),
     (0, None, "retry"),
     (429, {"error": "limit", "limit": "daily"}, "stop"),
+    (503, {"error": "The demo is switched off right now.", "off": True}, "stop"),
 ])
 def test_retry_decision(status, body, expected):
     assert de.retry_decision(status, body) == expected
@@ -219,7 +220,7 @@ def test_plan_never_pays(monkeypatch):
 
     monkeypatch.setattr(de.search, "search", fake_search)
     monkeypatch.setattr(de.rerank, "calls_needed", lambda conn, text, hits: 1 if text == "Old uncached?" else 0)
-    monkeypatch.setattr(de.db, "daily_asks", lambda conn: 7)
+    monkeypatch.setattr(de.usage, "count", lambda kind: 7)
     monkeypatch.setattr(de, "_local_tokens", lambda: (5000.0, 50.0))
     qs = [{**QUESTION, "question": text} for text in ("New?", "Old uncached?", "Old cached?")]
     plan = de.plan_pass(object(), qs)

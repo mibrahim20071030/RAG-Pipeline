@@ -25,7 +25,7 @@ PACKAGES = ("psycopg[binary]", "boto3")
 # The modules the query path imports (handler -> api -> pipeline -> search, rerank, generate). Not parse, chunk,
 # load, server or eval: they need pdfplumber or the PDFs, and never run in Lambda.
 RAG_MODULES = ("__init__", "api", "chunk_base", "config", "costlog", "db", "embed", "generate", "pipeline", "rerank",
-               "search")
+               "search", "usage")
 MAX_ZIP_MB = 50  # the console's direct upload limit
 MAX_UNZIPPED_MB = 250  # Lambda's limit for a .zip package
 
