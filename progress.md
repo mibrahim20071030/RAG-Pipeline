@@ -46,7 +46,9 @@ Next session (Cycle 2):
 - [x] 2026-10-23: Claude's deployed checks for step 7b passed (6 of 6).
 - [x] 2026-10-23: step 7b PR merged (#19, `23161dc`).
 - [ ] Say when to start step 8 (KB pipeline) in plan mode.
-- [ ] Code walkthrough session of the whole pipeline (Cycle 1 and Cycle 2 so far), when the human picks the time.
+- [x] 2026-10-23: step 7b walkthrough (in the chat).
+- [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
+- [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
 - [x] 2026-10-22: feedback loop decided: built after the step 8 comparison (Cycle 2 step 9), first on the KB pipeline (9a), then on our pipeline (9b).
 - [ ] In the step 9 plan: confirm review by local CLI (recommended) and DynamoDB for feedback (recommended).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
@@ -193,6 +195,7 @@ Cycle 2 (deploy, UI, report):
 - New rules from the human (written into `CLAUDE.md`): commits of only `CLAUDE.md`/`progress.md` skip the tests;
   after each build, Claude teaches its code step by step in simple language; a future session walks through the
   whole existing pipeline (files, functions, flow, decisions, AWS services) so the human can defend it to employers.
+  Console guides stay short; after the console work is checked, Claude explains in the chat what was done and why.
 - Still open: step 8 (KB pipeline) in plan mode when the human says so.
 
 ## 2026-10-22 — Session 20: review of the feedback-driven RAG design
