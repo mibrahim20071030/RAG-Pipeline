@@ -1,6 +1,7 @@
-"""Cycle 2 step 4 tests: the Lambda handler and the settings Lambda sets from its environment.
+"""Cycle 2 step 4 and 7b tests: the Lambda handler and the settings Lambda sets from its environment.
 
-No database and no AWS call: connect, ask and documents are fakes.
+No database and no AWS call: connect, ask, the answer and the daily counter are fakes. Step 7b: a request that will
+not be answered (off switch, bad route or body, bad question, over the cap) must never open a connection.
 """
 import base64
 import json
@@ -28,7 +29,8 @@ class FakeConnection:
 
 
 class Fakes:
-    """Stand-ins for db.connect, api.ask and api.documents that record their calls."""
+    """Stand-ins for db.connect and api.ask that record their calls. The fake ask opens the connection, as the real
+    one does once a question passed its checks."""
 
     def __init__(self):
         self.conns, self.asked = [], []
@@ -42,17 +44,31 @@ class Fakes:
         self.conns.append(FakeConnection())
         return self.conns[-1]
 
-    def ask(self, conn, payload):
-        self.asked.append((conn, payload))
-        if self.ask_error:
-            raise self.ask_error
-        return self.ask_result
-
-    def documents(self, conn):
-        return [{"name": "lm35", "part": "LM35", "revision": "SNIS159H", "pdf_url": None}]
+    def ask(self, payload, open_conn):
+        with open_conn() as conn:
+            self.asked.append((conn, payload))
+            if self.ask_error:
+                raise self.ask_error
+            return self.ask_result
 
     def call(self, event):
-        return handler.lambda_handler(event, None, connect=self.connect, ask=self.ask, documents=self.documents)
+        return handler.lambda_handler(event, None, connect=self.connect, ask=self.ask)
+
+
+class FakeCounter:
+    """rag.usage with a limit kept in memory."""
+
+    def __init__(self, used=0):
+        self.used, self.released = used, 0
+
+    def take(self, kind, limit, day=None):
+        if self.used >= limit:
+            return None
+        self.used += 1
+        return self.used
+
+    def release(self, kind, day=None):
+        self.used, self.released = max(0, self.used - 1), self.released + 1
 
 
 @pytest.fixture
@@ -102,9 +118,11 @@ def test_base64_body_is_decoded(fakes):
     assert fakes.asked[0][1]["question"].startswith("What is")
 
 
-def test_documents(fakes):
+def test_documents_route_is_gone(fakes):
+    # Step 7b: the page has the list written in, so this route only gave anyone a free way to wake Aurora.
     status, body = parsed(fakes.call(v2("GET", "/api/documents")))
-    assert status == 200 and body[0]["name"] == "lm35"
+    assert status == 404 and "error" in body
+    assert fakes.conns == []
 
 
 def test_status_from_ask_is_passed_on(fakes):
@@ -116,7 +134,7 @@ def test_status_from_ask_is_passed_on(fakes):
     (v2("GET", "/"), 404),
     (v2("GET", "/pdfs/lm35.pdf"), 404),
     (v2("GET", "/api/ask"), 405),
-    (v2("POST", "/api/documents", "{}"), 405),
+    (v2("POST", "/api/documents", "{}"), 404),
     (v2("POST", "/api/ask", ASK, content_type="text/plain"), 415),
     (v2("POST", "/api/ask", ASK, content_type=None), 415),
     (v2("POST", "/api/ask"), 400),
@@ -139,9 +157,71 @@ def test_a_bad_request_does_not_open_a_connection(fakes):
 def test_each_request_opens_and_closes_its_connection(fakes):
     # Aurora does not pause while a connection is open, so none may outlive its request.
     fakes.call(v2("POST", "/api/ask", ASK))
-    fakes.call(v2("GET", "/api/documents"))
+    fakes.call(v2("POST", "/api/ask", ASK))
     assert len(fakes.conns) == 2 and all(conn.closed for conn in fakes.conns)
     assert fakes.asked[0][0] is fakes.conns[0]
+
+
+def test_off_switch_answers_before_anything_else(fakes, monkeypatch, capsys):
+    monkeypatch.setattr(config, "DEMO_ENABLED", False)
+    for event in (v2("POST", "/api/ask", ASK), v2("GET", "/api/documents"), {}):
+        status, body = parsed(fakes.call(event))
+        assert status == 503 and body == {"error": api.DEMO_OFF, "off": True}
+    assert fakes.conns == [] and fakes.asked == []
+    assert all(json.loads(line)["status"] == 503 for line in capsys.readouterr().out.splitlines())
+
+
+def real_ask(counter, answer=None):
+    """The real api.ask with a fake counter and a fake answer, as the handler's `ask`."""
+    def answer_fn(conn, question, document=None):
+        if answer:
+            raise answer
+        return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
+                "cut_off": False, "timings_ms": {"search": 1.0}}
+
+    return lambda payload, open_conn: api.ask(payload, open_conn, answer_fn, counter)
+
+
+@pytest.fixture
+def capped(fakes, monkeypatch):
+    """The fakes with the real api.ask, a daily cap of 2 and a fake counter; db.list_documents answers too."""
+    monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 2)
+    monkeypatch.setattr(api.db, "list_documents", lambda conn: [{"name": "lm35", "file": "lm35.pdf"}])
+    fakes.counter = FakeCounter()
+    fakes.ask = real_ask(fakes.counter)
+    return fakes
+
+
+@pytest.mark.parametrize("payload", [
+    [], {"question": ""}, {"question": "   "}, {"question": 5}, {"question": "x" * (config.API_MAX_QUESTION_CHARS + 1)},
+    {"question": "q", "document": "lm358"}, {"question": "q", "document": 3},
+])
+def test_a_refused_question_never_connects_or_counts(capped, payload):
+    status, body = parsed(capped.call(v2("POST", "/api/ask", json.dumps(payload))))
+    assert status == 400 and "error" in body
+    assert capped.conns == [] and capped.counter.used == 0
+
+
+def test_over_the_daily_cap_never_connects(capped, capsys):
+    capped.counter.used = 2
+    status, body = parsed(capped.call(v2("POST", "/api/ask", ASK)))
+    assert status == 429 and body["limit"] == "daily"
+    assert capped.conns == []
+    assert "connect_ms" not in json.loads(capsys.readouterr().out.strip())
+
+
+def test_an_answered_question_counts_and_connects(capped, capsys):
+    status, body = parsed(capped.call(v2("POST", "/api/ask", ASK)))
+    assert status == 200 and body["answer"] == "35 V [1]"
+    assert capped.counter.used == 1 and len(capped.conns) == 1 and capped.conns[0].closed
+    assert "connect_ms" in json.loads(capsys.readouterr().out.strip())
+
+
+def test_database_that_does_not_answer_gives_the_place_back(capped):
+    capped.connect_error = psycopg.OperationalError("timeout expired")
+    status, body = parsed(capped.call(v2("POST", "/api/ask", ASK)))
+    assert status == 503 and body["error"] == api.DATABASE_WAKING
+    assert capped.counter.used == 0 and capped.counter.released == 1
 
 
 def test_connection_is_closed_when_ask_fails(fakes):
@@ -164,22 +244,25 @@ def test_content_type_is_read_without_case(fakes):
 
 def test_other_connect_failure_gives_json_500_and_a_log_line(fakes, capsys):
     fakes.connect_error = ValueError("DB_TARGET is 'aurora' but AURORA_HOST is empty")
-    status, body = parsed(fakes.call(v2("GET", "/api/documents")))
+    status, body = parsed(fakes.call(v2("POST", "/api/ask", ASK)))
     assert status == 500 and "error" in body
     log = json.loads(next(line for line in capsys.readouterr().out.splitlines() if line.startswith("{")))
-    assert log["status"] == 500 and log["path"] == "/api/documents"
+    assert log["status"] == 500 and log["path"] == "/api/ask"
 
 
 def test_database_that_does_not_answer_gives_503(fakes):
+    fakes.ask = real_ask(None)
     fakes.connect_error = psycopg.OperationalError("timeout expired")
-    status, body = parsed(fakes.call(v2("GET", "/api/documents")))
+    status, body = parsed(fakes.call(v2("POST", "/api/ask", ASK)))
     assert status == 503 and body["error"] == api.DATABASE_WAKING
-    fakes.connect_error = None
-    assert parsed(fakes.call(v2("GET", "/api/documents")))[0] == 200
 
 
-def test_database_lost_during_ask_gives_503(fakes):
-    fakes.ask_error = psycopg.OperationalError("server closed the connection")
+def test_database_lost_during_ask_gives_503(fakes, monkeypatch):
+    def lost(conn):
+        raise psycopg.OperationalError("server closed the connection")
+
+    monkeypatch.setattr(api.db, "list_documents", lost)
+    fakes.ask = real_ask(None)
     status, body = parsed(fakes.call(v2("POST", "/api/ask", ASK)))
     assert status == 503 and body["error"] == api.DATABASE_WAKING
     assert fakes.conns[0].closed
@@ -228,7 +311,7 @@ def test_deployed_cost_rows_are_printed(monkeypatch, tmp_path, capsys):
 def test_defaults_are_unchanged():
     # Local runs keep the Cycle 1 behaviour when none of the Lambda variables is set.
     names = ("RAG_RUNS_DIR", "BEDROCK_MAX_ATTEMPTS", "RERANK_MIN_INTERVAL_S", "BEDROCK_READ_TIMEOUT_S",
-             "AWS_LAMBDA_FUNCTION_NAME")
+             "AWS_LAMBDA_FUNCTION_NAME", "DEMO_ENABLED", "API_DAILY_ASK_LIMIT")
     if any(name in os.environ for name in names):
         pytest.skip("a Lambda setting is set in this shell")
     assert config.RUNS_DIR == config.ROOT / "runs"
@@ -236,15 +319,18 @@ def test_defaults_are_unchanged():
     assert config.RERANK_MIN_INTERVAL_S == 20
     assert config.BEDROCK_READ_TIMEOUT_S == 60 and config.BEDROCK_CONNECT_TIMEOUT_S == 60
     assert config.DEPLOYED is False
+    assert config.DEMO_ENABLED is True and config.API_DAILY_ASK_LIMIT == 0
 
 
 def test_lambda_settings_come_from_the_environment(tmp_path):
     env = {**os.environ, "RAG_RUNS_DIR": str(tmp_path), "BEDROCK_MAX_ATTEMPTS": "2", "RERANK_MIN_INTERVAL_S": "0",
            "AURORA_CONNECT_TIMEOUT_S": "22", "AURORA_CONNECT_ATTEMPTS": "1", "AURORA_RETRY_PAUSE_S": "3",
-           "BEDROCK_CONNECT_TIMEOUT_S": "5", "BEDROCK_READ_TIMEOUT_S": "20", "AWS_LAMBDA_FUNCTION_NAME": "datasheet-rag"}
+           "BEDROCK_CONNECT_TIMEOUT_S": "5", "BEDROCK_READ_TIMEOUT_S": "20", "AWS_LAMBDA_FUNCTION_NAME": "datasheet-rag",
+           "DEMO_ENABLED": "False", "USAGE_TABLE": "datasheet-rag-usage", "API_DAILY_ASK_LIMIT": "50"}
     code = ("from rag import config as c; print(c.COST_LOG, c.BEDROCK_MAX_ATTEMPTS, c.RERANK_MIN_INTERVAL_S, "
             "c.AURORA_CONNECT_TIMEOUT_S, c.AURORA_CONNECT_ATTEMPTS, c.AURORA_RETRY_PAUSE_S, c.BEDROCK_CONNECT_TIMEOUT_S, "
-            "c.BEDROCK_READ_TIMEOUT_S, c.DEPLOYED, sep='|')")
+            "c.BEDROCK_READ_TIMEOUT_S, c.DEPLOYED, c.DEMO_ENABLED, c.USAGE_TABLE, c.API_DAILY_ASK_LIMIT, sep='|')")
     out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True,
                          check=True).stdout.strip()
-    assert out.split("|") == [str(tmp_path / "cost_log.csv"), "2", "0.0", "22", "1", "3.0", "5.0", "20.0", "True"]
+    assert out.split("|") == [str(tmp_path / "cost_log.csv"), "2", "0.0", "22", "1", "3.0", "5.0", "20.0", "True",
+                              "False", "datasheet-rag-usage", "50"]

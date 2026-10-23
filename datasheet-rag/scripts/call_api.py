@@ -2,15 +2,13 @@
 
 Run from datasheet-rag, with API_URL (the invoke URL, no trailing path) in .env or the environment. With
 --base site, every command goes to SITE_URL instead (the CloudFront address, which passes /api/* on to the API):
-    python scripts\\call_api.py documents                      free: one database read
     python scripts\\call_api.py ask "What is ...?" --yes       paid: about $0.0023 new, $0.0003 cached
-    python scripts\\call_api.py cors http://localhost:8000     free: a preflight and a GET with that Origin
-    python scripts\\call_api.py limits                         free: unknown route, wrong method, long question, big body
+    python scripts\\call_api.py limits                         free: refused requests, none of which may wake Aurora
     python scripts\\call_api.py throttle --route ask --count 6 free: empty questions at once (Lambda answers 400)
-    python scripts\\call_api.py usage                          free: today's count of the daily cap, read from Aurora
+    python scripts\\call_api.py usage                          free: today's count of the daily cap, read from DynamoDB
     python scripts\\call_api.py --base site page               free: the page itself, and http:// sent on to https://
 
-No AWS key is used except by `usage`, which reads Aurora with the dev user's IAM token.
+No AWS key is used except by `usage`, which reads the DynamoDB table USAGE_TABLE with the dev user's key.
 """
 import argparse
 import http.client
@@ -27,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rag import config, db  # config also reads .env
+from rag import config, usage  # config also reads .env
 
 JSON = {"content-type": "application/json"}
 BASES = {"api": ("API_URL", "the API's invoke URL"), "site": ("SITE_URL", "the CloudFront address")}
@@ -67,19 +65,12 @@ def ask_body(question: str, document: str | None = None) -> bytes:
     return json.dumps({"question": question, "document": document}).encode()
 
 
-def cmd_cors(origin: str) -> None:
-    status, head, _, _ = call("OPTIONS", "/api/ask", headers={
-        "origin": origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type"})
-    print(f"Preflight OPTIONS /api/ask: {status}")
-    for name in sorted(h for h in head if h.startswith("access-control-")):
-        print(f"  {name}: {head[name]}")
-    status, head, _, _ = call("GET", "/api/documents", headers={"origin": origin})
-    print(f"GET /api/documents: {status}, access-control-allow-origin: {head.get('access-control-allow-origin')}")
-
-
 def cmd_limits() -> None:
     checks = [
         ("unknown route GET /api/nothing", "GET", "/api/nothing", None, {}),
+        ("removed route GET /api/documents", "GET", "/api/documents", None, {}),
+        ("empty question", "POST", "/api/ask", ask_body(""), JSON),
+        ("unknown datasheet", "POST", "/api/ask", ask_body("What is the supply voltage?", "lm358"), JSON),
         ("wrong method GET /api/ask", "GET", "/api/ask", None, {}),
         (f"question of {config.API_MAX_QUESTION_CHARS + 1} characters", "POST", "/api/ask",
          ask_body("x" * (config.API_MAX_QUESTION_CHARS + 1)), JSON),
@@ -92,10 +83,7 @@ def cmd_limits() -> None:
 
 
 def cmd_throttle(route: str, count: int) -> None:
-    if route == "ask":
-        job = lambda: call("POST", "/api/ask", ask_body(""), JSON)  # an empty question: Lambda answers 400, free
-    else:
-        job = lambda: call("GET", "/api/documents")
+    job = lambda: call("POST", "/api/ask", ask_body(""), JSON)  # an empty question: Lambda answers 400, free
     with ThreadPoolExecutor(max_workers=count) as pool:
         results = list(pool.map(lambda _: job(), range(count)))
     print(f"{count} requests to {route} at once: "
@@ -138,16 +126,13 @@ def main(argv: list[str]) -> None:
     parser.add_argument("--base", choices=list(BASES), default="api",
                         help="api: API_URL, the API directly (default); site: SITE_URL, through CloudFront")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("documents")
     ask = sub.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--document", choices=list(config.DOCUMENTS))
     ask.add_argument("--yes", action="store_true", help="make the paid calls without stopping first")
-    cors = sub.add_parser("cors")
-    cors.add_argument("origin")
     sub.add_parser("limits")
     throttle = sub.add_parser("throttle")
-    throttle.add_argument("--route", choices=["ask", "documents"], required=True)
+    throttle.add_argument("--route", choices=["ask"], required=True)
     throttle.add_argument("--count", type=at_least_one, default=6)
     sub.add_parser("usage")
     sub.add_parser("page")
@@ -156,17 +141,12 @@ def main(argv: list[str]) -> None:
     if args.command == "page" and base != "site":
         sys.exit("page checks the CloudFront site: run it with --base site.")
 
-    if args.command == "documents":
-        status, _, text, seconds = call("GET", "/api/documents")
-        show(status, text, seconds)
-    elif args.command == "ask":
+    if args.command == "ask":
         if not args.yes:
             sys.exit("This makes paid Bedrock calls: about $0.0023 for a new question, $0.0003 for a cached one. "
                      "Run again with --yes.")
         status, _, text, seconds = call("POST", "/api/ask", ask_body(args.question, args.document), JSON)
         show(status, text, seconds)
-    elif args.command == "cors":
-        cmd_cors(args.origin)
     elif args.command == "limits":
         cmd_limits()
     elif args.command == "throttle":
@@ -174,8 +154,7 @@ def main(argv: list[str]) -> None:
     elif args.command == "page":
         cmd_page()
     else:
-        with db.connect(target="aurora") as conn:
-            print(f"Questions counted today (UTC): {db.daily_asks(conn)}")
+        print(f"Questions counted today (UTC): {usage.count('asks')} of {config.DEPLOYED_DAILY_LIMIT}")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ is paid for on the AWS account. One request at a time, on one database connectio
 Postgres restarts.
 """
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -142,9 +143,8 @@ class Handler(BaseHTTPRequestHandler):
         state: _State = self.server.state
         start = time.perf_counter()
         try:
-            status, body = state.ask(state.conn(), payload)
-        except psycopg.OperationalError:
-            status, body = 503, {"error": api.NO_DATABASE}
+            # The kept connection, made only when the question passed its checks; this server never closes it.
+            status, body = state.ask(payload, lambda: contextlib.nullcontext(state.conn()))
         except Exception:  # noqa: BLE001 (any other failure still gets an answer the page can show)
             traceback.print_exc()
             status, body = 500, {"error": "The server hit an unexpected error. Its console has the details."}

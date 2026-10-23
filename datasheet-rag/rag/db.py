@@ -7,7 +7,6 @@ Every function takes a connection from `connect()`, which reaches the local Dock
 import functools
 import logging
 import time
-from datetime import date
 from pathlib import Path
 
 import psycopg
@@ -61,11 +60,6 @@ CREATE TABLE IF NOT EXISTS rerank_cache (
     model           TEXT NOT NULL,
     score           DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (question_sha256, text_sha256, model)
-);
-
-CREATE TABLE IF NOT EXISTS api_usage (
-    day  DATE PRIMARY KEY,
-    asks INTEGER NOT NULL
 );
 """
 
@@ -476,39 +470,6 @@ def create_test_schema(conn: psycopg.Connection, name: str) -> None:
 
 def drop_test_schema(conn: psycopg.Connection, name: str) -> None:
     conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(_test_schema(name)))
-
-
-# The day a question counts against, in each query below: `day` if given, else today in UTC by the database's clock.
-
-def take_daily_ask(conn: psycopg.Connection, limit: int, day: date | None = None) -> int | None:
-    """Count one question against the cap of `day` (default today, UTC): the new count, or None when `limit`
-    is already reached. One statement, so two requests at the same moment cannot both take the last place."""
-    row = conn.execute(
-        "INSERT INTO api_usage (day, asks) VALUES (COALESCE(%(day)s::date, (now() AT TIME ZONE 'UTC')::date), 1) "
-        "ON CONFLICT (day) DO UPDATE SET asks = api_usage.asks + 1 WHERE api_usage.asks < %(limit)s "
-        "RETURNING asks",
-        {"limit": limit, "day": day},
-    ).fetchone()
-    return row[0] if row else None
-
-
-def release_daily_ask(conn: psycopg.Connection, day: date | None = None) -> None:
-    """Give back one place of the cap of `day` (default today, UTC), for a question that was refused before
-    an answer was paid for. Never goes below 0."""
-    conn.execute(
-        "UPDATE api_usage SET asks = asks - 1 "
-        "WHERE day = COALESCE(%(day)s::date, (now() AT TIME ZONE 'UTC')::date) AND asks > 0",
-        {"day": day},
-    )
-
-
-def daily_asks(conn: psycopg.Connection, day: date | None = None) -> int:
-    """How many questions the cap of `day` (default today, UTC) has counted."""
-    row = conn.execute(
-        "SELECT asks FROM api_usage WHERE day = COALESCE(%(day)s::date, (now() AT TIME ZONE 'UTC')::date)",
-        {"day": day},
-    ).fetchone()
-    return row[0] if row else 0
 
 
 def database_size(conn: psycopg.Connection) -> int:

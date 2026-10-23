@@ -1,5 +1,9 @@
-"""Layer 8b tests for rag.api: the web page's JSON, without HTTP. No paid call and no database: the answer step
-and the document list are fakes, and PDF_DIR is a temporary folder."""
+"""Layer 8b and Cycle 2 step 7b tests for rag.api: the web page's JSON, without HTTP. No paid call, no database
+and no DynamoDB: the answer step, the document list, the connection and the daily counter are fakes, and PDF_DIR is
+a temporary folder."""
+import contextlib
+from datetime import date
+
 import psycopg
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -41,6 +45,23 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "COST_LOG", tmp_path / "cost_log.csv")
     monkeypatch.setattr(db, "list_documents", lambda conn: DOCS)
     monkeypatch.setattr(config, "DOCUMENTS", VENDOR)
+
+
+class Opener:
+    """The `open_conn` of api.ask: counts how often a connection was asked for, or fails like a sleeping database."""
+
+    def __init__(self, error=None):
+        self.opened, self.error = 0, error
+
+    def __call__(self):
+        self.opened += 1
+        if self.error:
+            raise self.error
+        return contextlib.nullcontext(None)
+
+
+def ask(payload, answer_fn, counter=None, opener=None):
+    return api.ask(payload, opener or Opener(), answer_fn, counter)
 
 
 def fake_answer(returned=None, raises=None, seen=None):
@@ -86,7 +107,7 @@ def test_every_configured_vendor_address_is_https():
 # ---------------------------------------------------------------- a good answer
 
 def test_answer_shape():
-    status, body = api.ask(None, {"question": "  What is the max supply voltage?  "}, fake_answer())
+    status, body = ask({"question": "  What is the max supply voltage?  "}, fake_answer())
     assert status == 200
     assert body["question"] == "What is the max supply voltage?"
     assert body["answer"] == "35 V [1]."
@@ -102,32 +123,32 @@ def test_answer_shape():
 
 def test_source_without_a_local_pdf_links_to_the_vendor_page():
     answer = result(sources=[{"label": 1, "id": 9, "document": "esp32_datasheet_en", "page": 51, "page_label": "51"}])
-    status, body = api.ask(None, {"question": "q"}, fake_answer(answer))
+    status, body = ask({"question": "q"}, fake_answer(answer))
     assert status == 200 and body["sources"][0]["pdf_url"] == "https://vendor.example/esp32.pdf#page=51"
 
 
 def test_source_without_any_pdf_has_no_link(monkeypatch):
     monkeypatch.setitem(VENDOR, "esp32_datasheet_en", {**VENDOR["esp32_datasheet_en"], "url": None})
     answer = result(sources=[{"label": 1, "id": 9, "document": "esp32_datasheet_en", "page": 51, "page_label": "51"}])
-    status, body = api.ask(None, {"question": "q"}, fake_answer(answer))
+    status, body = ask({"question": "q"}, fake_answer(answer))
     assert status == 200 and body["sources"][0]["pdf_url"] is None
 
 
 def test_question_is_trimmed_and_document_passed_through():
     seen = {}
-    api.ask(None, {"question": " q ", "document": "lm35"}, fake_answer(seen=seen))
+    ask({"question": " q ", "document": "lm35"}, fake_answer(seen=seen))
     assert seen == {"question": "q", "document": "lm35"}
 
 
 def test_empty_document_means_all():
     seen = {}
-    api.ask(None, {"question": "q", "document": ""}, fake_answer(seen=seen))
+    ask({"question": "q", "document": ""}, fake_answer(seen=seen))
     assert seen["document"] is None
 
 
 def test_not_contained_and_warnings_are_passed_on():
     answer = result(answer=config.NOT_CONTAINED, not_contained=True, sources=[], passages=[])
-    status, body = api.ask(None, {"question": "q"}, fake_answer(answer))
+    status, body = ask({"question": "q"}, fake_answer(answer))
     assert status == 200 and body["not_contained"] is True and body["sources"] == []
     assert len(body["warnings"]) == 1 and "no chunks" in body["warnings"][0]
 
@@ -139,12 +160,12 @@ def test_spend_is_read_from_the_cost_log():
         log_cost("generate", "m", "input_tokens", 100, 0.0006)
         return result()
 
-    _, body = api.ask(None, {"question": "q"}, answer)
+    _, body = ask({"question": "q"}, answer)
     assert body["spent_usd"] == pytest.approx(0.0006)
 
 
 def test_answer_parts_mark_the_citations():
-    _, body = api.ask(None, {"question": "q"}, fake_answer())
+    _, body = ask({"question": "q"}, fake_answer())
     assert body["answer_parts"] == [{"text": "35 V "}, {"text": "[1]", "labels": [1]}, {"text": "."}]
     assert "".join(part["text"] for part in body["answer_parts"]) == body["answer"]
 
@@ -168,25 +189,25 @@ def test_answer_parts_of_plain_text():
 
 @pytest.mark.parametrize("document", [["lm35"], {"name": "lm35"}, 5, False, 0])
 def test_document_that_is_not_text(document):
-    status, body = api.ask(None, {"question": "q", "document": document},
+    status, body = ask({"question": "q", "document": document},
                            fake_answer(raises=AssertionError("must not be called")))
     assert status == 400 and "datasheet" in body["error"]
 
 
 @pytest.mark.parametrize("payload", [{}, {"question": ""}, {"question": "   "}, {"question": 5}, [], "q", None])
 def test_no_question(payload):
-    status, body = api.ask(None, payload, fake_answer(raises=AssertionError("must not be called")))
+    status, body = ask(payload, fake_answer(raises=AssertionError("must not be called")))
     assert status == 400 and body["error"]
 
 
 def test_question_too_long():
-    status, body = api.ask(None, {"question": "x" * (config.API_MAX_QUESTION_CHARS + 1)},
+    status, body = ask({"question": "x" * (config.API_MAX_QUESTION_CHARS + 1)},
                            fake_answer(raises=AssertionError("must not be called")))
     assert status == 400 and str(config.API_MAX_QUESTION_CHARS) in body["error"]
 
 
 def test_unknown_document():
-    status, body = api.ask(None, {"question": "q", "document": "lm358"},
+    status, body = ask({"question": "q", "document": "lm358"},
                            fake_answer(raises=AssertionError("must not be called")))
     assert status == 400 and "datasheet" in body["error"]
 
@@ -198,27 +219,27 @@ def client_error(code: str) -> ClientError:
 
 
 def test_throttling_is_429():
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=client_error("ThrottlingException")))
+    status, body = ask({"question": "q"}, fake_answer(raises=client_error("ThrottlingException")))
     assert status == 429 and "minute" in body["error"]
 
 
 def test_access_denied_is_502_with_the_permission():
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=client_error("AccessDeniedException")))
+    status, body = ask({"question": "q"}, fake_answer(raises=client_error("AccessDeniedException")))
     assert status == 502 and "bedrock:Rerank" in body["error"]
 
 
 def test_other_aws_error_names_its_code():
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=client_error("ValidationException")))
+    status, body = ask({"question": "q"}, fake_answer(raises=client_error("ValidationException")))
     assert status == 502 and "ValidationException" in body["error"]
 
 
 def test_no_credentials():
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=NoCredentialsError()))
+    status, body = ask({"question": "q"}, fake_answer(raises=NoCredentialsError()))
     assert status == 502 and "credentials" in body["error"]
 
 
 def test_step_runtime_error():
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=RuntimeError("the model stopped")))
+    status, body = ask({"question": "q"}, fake_answer(raises=RuntimeError("the model stopped")))
     assert status == 502 and "the model stopped" in body["error"]
 
 
@@ -227,79 +248,133 @@ def test_database_lost(monkeypatch):
         raise psycopg.OperationalError("connection refused")
 
     monkeypatch.setattr(db, "list_documents", down)
-    status, body = api.ask(None, {"question": "q"}, fake_answer())
+    status, body = ask({"question": "q"}, fake_answer())
     assert status == 503 and "docker start rag-pg" in body["error"]
 
 
 def test_database_lost_during_the_answer():
-    status, _ = api.ask(None, {"question": "q"}, fake_answer(raises=psycopg.OperationalError("gone")))
+    status, _ = ask({"question": "q"}, fake_answer(raises=psycopg.OperationalError("gone")))
     assert status == 503
 
 
-# ---------------------------------------------------------------- the daily question cap (Cycle 2 step 5)
+# ---------------------------------------------------------------- the daily question cap (Cycle 2 steps 5 and 7b)
+
+class FakeCounter:
+    """rag.usage with the counts in memory; `calls` counts how often a place was asked for."""
+
+    def __init__(self):
+        self.calls, self.asks, self.error, self.days = 0, 0, None, []
+
+    def take(self, kind, limit, day=None):
+        assert kind == "asks"
+        self.days.append(day)
+        self.calls += 1
+        if self.error:
+            raise self.error
+        if self.asks >= limit:
+            return None
+        self.asks += 1
+        return self.asks
+
+    def release(self, kind, day=None):
+        self.days.append(day)
+        self.asks = max(0, self.asks - 1)
+
 
 @pytest.fixture
 def counter(monkeypatch):
-    """A fake db.take_daily_ask with a limit of 2; `counter["calls"]` counts how often it was asked."""
-    state = {"calls": 0, "asks": 0}
-
-    def take(conn, limit, day=None):
-        state["calls"] += 1
-        if state["asks"] >= limit:
-            return None
-        state["asks"] += 1
-        return state["asks"]
-
-    def release(conn, day=None):
-        state["asks"] = max(0, state["asks"] - 1)
-
-    monkeypatch.setattr(db, "take_daily_ask", take)
-    monkeypatch.setattr(db, "release_daily_ask", release)
+    """A fake counter with a limit of 2."""
     monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 2)
-    return state
+    return FakeCounter()
 
 
 def test_no_limit_never_counts(monkeypatch, counter):
     monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 0)
     for _ in range(3):
-        assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
-    assert counter["calls"] == 0
+        assert ask({"question": "q"}, fake_answer(), counter)[0] == 200
+    assert counter.calls == 0
 
 
-def test_reached_limit_answers_429_without_calling_the_pipeline(counter):
-    assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
-    assert api.ask(None, {"question": "q"}, fake_answer())[0] == 200
-    seen = {}
-    status, body = api.ask(None, {"question": "q"}, fake_answer(seen=seen))
+def test_reached_limit_answers_429_without_connecting(counter):
+    assert ask({"question": "q"}, fake_answer(), counter)[0] == 200
+    assert ask({"question": "q"}, fake_answer(), counter)[0] == 200
+    seen, opener = {}, Opener()
+    status, body = ask({"question": "q"}, fake_answer(seen=seen), counter, opener)
     assert status == 429 and body == {"error": api.DAILY_LIMIT, "limit": "daily"}
-    assert seen == {}
+    assert seen == {} and opener.opened == 0
 
 
 def test_aws_throttling_gives_the_place_back(counter):
     throttled = ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "Rerank")
-    status, body = api.ask(None, {"question": "q"}, fake_answer(raises=throttled))
+    status, body = ask({"question": "q"}, fake_answer(raises=throttled), counter)
     assert status == 429 and "limit" not in body
-    assert counter["asks"] == 0
+    assert counter.asks == 0
 
 
 def test_other_aws_failures_keep_the_place(counter):
     denied = ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Converse")
-    assert api.ask(None, {"question": "q"}, fake_answer(raises=denied))[0] == 502
-    assert counter["asks"] == 1
+    assert ask({"question": "q"}, fake_answer(raises=denied), counter)[0] == 502
+    assert counter.asks == 1
 
 
 @pytest.mark.parametrize("payload", [{"question": ""}, {"question": "x" * 501}, {"question": "q", "document": "nope"},
                                      "not a dict"])
-def test_invalid_requests_do_not_use_up_the_cap(counter, payload):
-    assert api.ask(None, payload, fake_answer())[0] == 400
-    assert counter["calls"] == 0
+def test_invalid_requests_neither_count_nor_connect(counter, payload):
+    opener = Opener()
+    assert ask(payload, fake_answer(), counter, opener)[0] == 400
+    assert counter.calls == 0 and opener.opened == 0
 
 
-def test_database_lost_while_counting(monkeypatch, counter):
-    def down(conn, limit, day=None):
-        raise psycopg.OperationalError("gone")
-
-    monkeypatch.setattr(db, "take_daily_ask", down)
+def test_database_that_does_not_answer_gives_the_place_back(counter):
     seen = {}
-    status, _ = api.ask(None, {"question": "q"}, fake_answer(seen=seen))
+    status, _ = ask({"question": "q"}, fake_answer(seen=seen), counter, Opener(psycopg.OperationalError("timeout")))
     assert status == 503 and seen == {}
+    assert counter.calls == 1 and counter.asks == 0
+
+
+def test_counter_that_does_not_answer_refuses_without_connecting(counter):
+    counter.error = ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "no table"}}, "UpdateItem")
+    seen, opener = {}, Opener()
+    status, body = ask({"question": "q"}, fake_answer(seen=seen), counter, opener)
+    assert status == 503 and body["error"] == api.BUSY
+    assert seen == {} and opener.opened == 0
+
+
+def test_documents_are_checked_without_the_database(monkeypatch):
+    def not_called(conn):
+        raise AssertionError("the database must not be read before the checks pass")
+
+    monkeypatch.setattr(db, "list_documents", not_called)
+    assert api.check_ask({"question": " q ", "document": "lm35"}) == ("q", "lm35", None)
+    assert api.check_ask({"question": "q", "document": ""}) == ("q", None, None)
+    assert api.check_ask({"question": "q", "document": "lm358"})[2][0] == 400
+
+
+def test_database_lost_during_the_answer_keeps_the_place(counter):
+    # Bedrock may already have been paid for, so the place stays counted.
+    status, _ = ask({"question": "q"}, fake_answer(raises=psycopg.OperationalError("gone")), counter)
+    assert status == 503 and counter.asks == 1
+
+
+def test_a_place_goes_back_to_the_day_it_was_taken_from(counter, monkeypatch):
+    days = iter([date(2026, 10, 23), date(2026, 10, 24)])
+    monkeypatch.setattr(api.usage, "today", lambda: next(days))
+    throttled = ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "Rerank")
+    ask({"question": "q"}, fake_answer(raises=throttled), counter)
+    assert counter.days == [date(2026, 10, 23), date(2026, 10, 23)]
+
+
+def test_datasheet_not_stored_gives_400_and_the_place_back(counter, monkeypatch):
+    # Configured in config.DOCUMENTS but not loaded in this database (for example a partial reload).
+    monkeypatch.setattr(db, "list_documents", lambda conn: [DOCS[1]])
+    seen = {}
+    status, body = ask({"question": "q", "document": "esp32_datasheet_en"}, fake_answer(seen=seen), counter)
+    assert status == 400 and "datasheet" in body["error"]
+    assert seen == {} and counter.asks == 0
+
+
+def test_counter_without_a_table_refuses_with_503(counter):
+    counter.error = RuntimeError("USAGE_TABLE is not set")
+    opener = Opener()
+    status, body = ask({"question": "q"}, fake_answer(), counter, opener)
+    assert status == 503 and body["error"] == api.BUSY and opener.opened == 0

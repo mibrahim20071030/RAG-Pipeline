@@ -155,7 +155,9 @@ DEPLOYED_PACE_S = 21  # seconds between questions: Rerank allows 3 a minute and 
 DEPLOYED_RETRY_WAIT_S = 60  # wait after a 429 or a gateway 503/504 before the same question is sent again
 DEPLOYED_MAX_ATTEMPTS = 4  # one send plus 3 retries
 DEPLOYED_TIMEOUT_S = 40  # client timeout; API Gateway gives up at 30 s
-DEPLOYED_DAILY_LIMIT = 300  # API_DAILY_ASK_LIMIT as set in the Lambda (locally it is 0, off)
+# API_DAILY_ASK_LIMIT as set in the Lambda (locally it is 0, off); 300 until step 7b. A full deployed eval (first
+# and cached pass, 98 asks) needs more: raise both for that day, then set them back.
+DEPLOYED_DAILY_LIMIT = 50
 LAMBDA_FUNCTION = "datasheet-rag"
 LAMBDA_MEMORY_MB = 512
 # Prices for us-east-1, checked on the AWS pricing pages on 2026-10-18 (all inside the Free plan credits here):
@@ -172,8 +174,13 @@ SERVER_HOST = "127.0.0.1"  # never 0.0.0.0: anyone who can reach the server can 
 SERVER_PORT = 8000
 API_MAX_QUESTION_CHARS = 500
 API_MAX_BODY_BYTES = 10_000
-# Questions answered per UTC day before /api/ask says "try tomorrow" (Cycle 2 step 5). 0 is off; Lambda sets 300.
+# Questions answered per UTC day before /api/ask says "try tomorrow" (Cycle 2 step 5). 0 is off; Lambda sets 50.
+# Counted in the DynamoDB table USAGE_TABLE (step 7b), so a request over the cap never wakes Aurora.
 API_DAILY_ASK_LIMIT = int(os.environ.get("API_DAILY_ASK_LIMIT") or "0")
+USAGE_TABLE = os.environ.get("USAGE_TABLE", "")
+USAGE_KEEP_DAYS = 7  # a day's counter item carries an expiry this many days later, for DynamoDB's TTL
+# The off switch of the deployed demo (step 7b): DEMO_ENABLED=false in the Lambda answers 503 before anything else.
+DEMO_ENABLED = os.environ.get("DEMO_ENABLED", "true").strip().lower() != "false"
 
 # Local database (Cycle 1). The password comes from .env or the environment only.
 PG_HOST = os.environ.get("PGHOST", "localhost")

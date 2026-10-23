@@ -26,7 +26,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from rag import config, db, rerank, search
+from rag import config, db, rerank, search, usage
 from rag.eval import metrics, questions
 from rag.eval.run_eval import _embed_usd, _median, _read_csv
 
@@ -53,7 +53,7 @@ RETRY_STATUSES = {0, 429, 503, 504}  # 0: no answer at all (timeout, connection 
 
 
 class DailyLimit(Exception):
-    """The API's daily cap is used up: nothing more can be asked today."""
+    """The API's daily cap is used up, or the demo is switched off: nothing more can be asked now."""
 
 
 def base_url(base: str) -> str:
@@ -101,8 +101,11 @@ def send(url: str, question: str, opener=urllib.request.urlopen, clock=time.perf
 
 
 def retry_decision(status: int, body) -> str | None:
-    """"stop" for the daily-limit 429, "retry" for throttling, a gateway 503/504 or no answer, else None."""
+    """"stop" for the daily-limit 429 or the demo switched off, "retry" for throttling, a gateway 503/504 or no
+    answer, else None."""
     if status == 429 and isinstance(body, dict) and body.get("limit") == "daily":
+        return "stop"
+    if status == 503 and isinstance(body, dict) and body.get("off"):
         return "stop"
     return "retry" if status in RETRY_STATUSES else None
 
@@ -253,10 +256,11 @@ def plan_pass(conn, questions_: list[dict]) -> dict:
         rerank_calls += rerank.calls_needed(conn, text, hits)
     cost = {"embed": _embed_usd(sorted(uncached)), "rerank": rerank_calls * config.RERANK_USD_PER_QUERY,
             "generate": answer_usd(len(texts))}
+    used = usage.count("asks")  # the deployed daily cap, kept in DynamoDB since step 7b
     return {"questions": len(texts), "embed_calls": len(uncached), "rerank_calls": rerank_calls,
             "generate_calls": len(texts), "cost": cost, "total": sum(cost.values()),
-            "minutes": len(texts) * config.DEPLOYED_PACE_S / 60, "daily_asks": db.daily_asks(conn),
-            "daily_left": config.DEPLOYED_DAILY_LIMIT - db.daily_asks(conn)}
+            "minutes": len(texts) * config.DEPLOYED_PACE_S / 60, "daily_asks": used,
+            "daily_left": config.DEPLOYED_DAILY_LIMIT - used}
 
 
 def print_plan(plan: dict) -> None:

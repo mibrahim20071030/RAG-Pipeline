@@ -332,7 +332,7 @@ details.details summary:hover { color: var(--text-muted); }
   }
   // Only throttling and server-side failures are worth sending again; any other 4xx would fail the same way.
   function failure(status, data) {
-    const retry = status === 429 ? !(data && data.limit === "daily") : status >= 500;
+    const retry = status === 429 ? !(data && data.limit === "daily") : status >= 500 && !(data && data.off);
     if (data && data.error) return { message: data.error, retry };
     if (status === 429) return { message: "Too many questions right now. Wait a minute and ask again.", retry };
     if (status >= 500) return { message: BUSY, retry };
