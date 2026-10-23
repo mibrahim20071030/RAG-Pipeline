@@ -39,6 +39,8 @@ Next session (Cycle 2):
 - [ ] Optional: after a night with no calls, tell Claude so it can run one long-idle cold trial ($0.0003).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [ ] Next session, first: decide how to close the cost risk (anyone can keep Aurora awake; options in `CLAUDE.md`, step 7).
+- [x] 2026-10-22: feedback loop decided: built after the step 8 comparison (Cycle 2 step 9), first on the KB pipeline (9a), then on our pipeline (9b).
+- [ ] In the step 9 plan: confirm review by local CLI (recommended) and DynamoDB for feedback (recommended).
 - [x] (done) Step 6 console work in `datasheet-rag/runs/frontend_deploy.md`: upload `build\lambda.zip` and click Save, S3 bucket, CloudFront distribution, `/api/*` behavior, clear CORS, `SITE_URL=` in `datasheet-rag\.env`. Then tell Claude.
 - [x] Do the step 5 console work in `datasheet-rag/runs/api_gateway.md` (new zip + `API_DAILY_ASK_LIMIT=300`, HTTP API, throttling, CORS, access logs), put `API_URL=` in `datasheet-rag\.env`, then tell Claude.
 
@@ -133,8 +135,23 @@ Cycle 2 (deploy, UI, report):
 - [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
 - [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); PR #18 merged.
 - [ ] 8. Knowledge Base comparison: a second pipeline on Bedrock Knowledge Bases with S3 Vectors, judged on the same 49 questions (added 2026-10-16).
-- [ ] 9. Evaluation report (including the comparison) and recorded demo.
-- [ ] 10. Teardown checklist (including the Knowledge Base resources), then confirm in Billing that spend has stopped.
+- [ ] 9a. Feedback loop on the Knowledge Base pipeline, after step 8's results are final (added 2026-10-22).
+- [ ] 9b. The same feedback loop on our pipeline.
+- [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
+- [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-22 — Session 20: review of the feedback-driven RAG design
+
+- Done: read the human's design PDF `feedback_driven_rag_aws_design.pdf` (repo root; its companion ZIP is not in the repo) and reviewed it against this project. No code changed and nothing on AWS was touched.
+- Review, in short:
+  - Kept: user feedback is a claim, not a fact; human approval before publishing; a saved record per answer (`answer_id`); regression cases per correction; a separate correction index queried on its own.
+  - Does not fit as written: datasheets are always the source of truth, so most feedback needs a diagnosis (retrieval miss, misread, false refusal, out of scope) rather than a correction document. A correction must cite the datasheet page it was checked against, or page-level citations break. Corrections on the KB would make the step 8 comparison unfair unless they are off for it. Five DynamoDB tables, EventBridge, Step Functions and reviewer endpoints with Cognito are too much for a one-reviewer demo; a local review CLI removes the need for a login system. A public `/api/feedback` adds a write path while the Aurora cost risk is still open; a DynamoDB table would not wake Aurora and could also hold the daily counter.
+  - Proposed order: fix the cost risk first, then step 8, then the feedback loop as its own step (a: `answer_id`, saved record and `POST /api/feedback`; b: review CLI with diagnosis; c: correction store citing the datasheet page; d: `correction_cases.jsonl` before/after plus the 49 for regressions). Report and teardown would each move down by one.
+- Explained the full flow to the human step by step (ask and save the record, 👎 feedback, review, diagnosis, correction, publish, checks, report, retract), using q08 as the example.
+- Decision (the human): the feedback loop is built **after** the step 8 comparison is finished and tested, so the comparison results are not skewed: first on the **Knowledge Base pipeline** (9a), then on **our pipeline** too (9b). Claude first recorded 9b as optional; the human corrected that, it is planned. Added to `CLAUDE.md` as Cycle 2 step 9 (status line, decisions table, step outline, teardown checklist, definition of done); report and teardown are now steps 10 and 11.
+- Still to confirm in the step 9 plan: review by local CLI and DynamoDB for feedback (both recommended).
+- Problem: the pre-commit secret check failed on the untracked `feedback_driven_rag_aws_design.pdf` (PDFs in the repo root must not be committed). Why: it sits in the repo root and was not ignored. Fix: added it to `.gitignore`, next to `Project2_Study_Guide.pdf`.
+- Still open: the Aurora cost risk (first), then step 8, then step 9a, then 9b.
 
 ## 2026-10-18 — Session 19: Cycle 2 step 7 (Deployed evaluation), in progress
 

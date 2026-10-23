@@ -135,7 +135,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - `README.md` is for recruiters: results, evaluation and limits. It does not mention Cycle 2 or how the build was organised (the human's choice). It was checked with `writing-guidelines`.
   - The Chrome extension was not connected, so the UI was tested with `curl` and headless Edge.
 - Cycle 1 is complete.
-- Next: first the open cost risk under step 7 (Aurora can be kept awake by anyone), then Cycle 2 step 8 (Knowledge Base comparison), in plan mode, when the human says so.
+- Next: first the open cost risk under step 7 (Aurora can be kept awake by anyone), then Cycle 2 step 8 (Knowledge Base comparison), then step 9a (feedback loop on the KB), then step 9b (feedback loop on our pipeline), each in plan mode, when the human says so.
+- Plan change on 2026-10-22 (the human's decision): a human-approved feedback loop is added as Cycle 2 step 9, built **after** step 8's comparison is finished, so no correction can skew the comparison. 9a puts it on the Knowledge Base pipeline first; 9b then puts it on our pipeline too (planned, not optional). Source: the human's design PDF `feedback_driven_rag_aws_design.pdf` (repo root, gitignored), reviewed on 2026-10-22 (see `progress.md`, Session 20). Report and teardown moved to steps 10 and 11. Nothing about it is built or verified yet.
 - Plan change on 2026-10-16 (the human's decision): after the deployed evaluation, Cycle 2 builds a second RAG pipeline with Amazon Bedrock Knowledge Bases and an S3 Vectors store, and compares it with ours on the same 49 questions (Cycle 2 step 8). The steps after it moved down by one. Nothing about it is built or verified yet.
 - Cycle 2 step 1 (Aurora smoke test): DONE on 2026-10-16, single agent, merged as PR #12 (`faa47cb`). Results are in `runs/aurora_smoke.md`.
   - Free plan facts, verified in the AWS docs on 2026-10-16:
@@ -350,6 +351,7 @@ Rules for the agents (also written into each definition):
 | Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 10 (frozen at Layer 8; k 5 was the start value). | k 10 cut false refusals from 6 to 2 (Layer 7). |
 | Frontend | One static HTML page with `fetch` (`datasheet-rag/web/index.html`), served by `rag/server.py` locally in Cycle 1 and from S3 in Cycle 2 | No framework or build step. Built in Layer 8b. |
 | Managed comparison | A second pipeline on Bedrock Knowledge Bases with S3 Vectors, built after the deployed evaluation and judged with the same questions and metrics (Cycle 2 step 8). | Shows whether the managed service is worth the control it takes away (hybrid search, table chunking). Decided by the human on 2026-10-16. |
+| Feedback loop | Human-approved corrections, after the step 8 comparison is final: first on the KB pipeline (step 9a), then on our pipeline (step 9b). | Corrections added before or during the comparison would skew it. Decided by the human on 2026-10-22. |
 | Public demo | Throttled API Gateway plus Lambda concurrency cap. Torn down after publishing. A recorded demo and the repo stay as the portfolio artifact. | A public URL is the main spending risk. |
 
 ## Architecture
@@ -586,8 +588,14 @@ Order of work, each with a test written when the step starts:
    - Two levels: retrieval only (KB `Retrieve` against our hybrid search plus reranker: recall@k, MRR) and end to end (KB `RetrieveAndGenerate` against `answer_question`: citation hit rate, refusals, and RAGAS on the best setup if the budget allows). Map KB results to `(document, page)` hits so `rag/eval/metrics.py` is reused unchanged. The page number for a PDF chunk is expected in the result metadata (VERIFY the field name).
    - Expected differences to test, not assume: S3 Vectors is believed to support vector search only, with KB hybrid search needing another store such as OpenSearch Serverless or Aurora (VERIFY); our custom table chunking against the KB parsers (default, foundation model parser, Bedrock Data Automation; VERIFY options and prices); KB chunking options (fixed, hierarchical, semantic, none); build effort, latency and cost per question.
    - Friction: the dev IAM user can only call Bedrock, so the human creates the S3 bucket, the S3 vector bucket and index, and the KB service role in the console. Ingestion runs through the Titan quota (60 a minute), and a reranked KB run of 49 questions takes about 17 minutes (Rerank 3 a minute), with no help from our rerank cache. Check S3 Vectors and KB prices before any paid run, and print calls and cost first as usual.
-9. **Report.** Write the evaluation report: setup, the 40-question set, results table (recall@k, MRR, RAGAS faithfulness and relevancy, latency, cost), failure analysis by question type, the comparison with the Knowledge Base pipeline, and what was learned. Add a recorded demo.
-10. **Teardown.** After publishing, run the teardown checklist and confirm in Billing that spend has stopped.
+9. **Feedback loop (added 2026-10-22): 9a on the Knowledge Base, then 9b on our pipeline.** Starts only after step 8's comparison results are final and recorded, so they stay unskewed. Each part has its own plan in plan mode; split into smaller steps there. 9b reuses what 9a builds (feedback table, review CLI, diagnosis, correction cases, report) and changes only where corrections are stored and searched. Design source: `feedback_driven_rag_aws_design.pdf` (repo root, gitignored), with the changes from the 2026-10-22 review:
+   - Flow: every KB answer gets an `answer_id` and a saved record (question, passages with document and page, answer, model, prompt and config version, TTL); a public `POST /api/feedback` (reason plus optional comment, one rating per answer, throttled, length-limited); a review of the queue; a **diagnosis** (answer was correct, not in the datasheets, retrieval miss, misread, false refusal); a correction written by the human with a required document, page (checked on the rendered page) and scope; published to a **separate correction index** (own S3 prefix, ingestion job, `published` only after `Retrieve` returns it); then checks (same question, paraphrases, a negative control, and the 49 questions for regressions); a `report` of the metrics; `retract`.
+   - User comments never reach the model; only reviewer-written text is published. Corrections cite the datasheet page so citations stay page-level.
+   - Recommended, to confirm in the step's plan: review by a local CLI with the human's credentials (no reviewer endpoints, no login system); feedback and answer records in one DynamoDB table (does not wake Aurora). Correction cases go in `data/correction_cases.jsonl`; `data/questions.jsonl` stays frozen.
+   - VERIFY in the plan: S3 Vectors metadata filtering in a KB, metadata sidecar files, `StartIngestionJob` / `GetIngestionJob` fields, DynamoDB pricing on the Free plan. The human creates the table, prefix, route and IAM permissions in the console.
+   - 9b, our pipeline: a `corrections` table (SQL in `rag/db.py`, vector from Titan), searched separately from the chunks with a closeness threshold and a document match, and merged as an extra passage (`[n] Verified note: <part> (<document>), page <page>`) that cites the datasheet page. Same checks as 9a, plus the 49 questions on our pipeline for regressions.
+10. **Report.** Write the evaluation report: setup, the 40-question set, results table (recall@k, MRR, RAGAS faithfulness and relevancy, latency, cost), failure analysis by question type, the comparison with the Knowledge Base pipeline, the feedback loop's results, and what was learned. Add a recorded demo.
+11. **Teardown.** After publishing, run the teardown checklist and confirm in Billing that spend has stopped.
 
 ### Teardown checklist
 
@@ -595,6 +603,7 @@ Order of work, each with a test written when the step starts:
 - Disable, then delete, the CloudFront distribution `datasheet-rag-web` (before its bucket), and its origin access control. Cancel the Free flat-rate plan if it is listed separately.
 - Empty and delete the S3 bucket `datasheet-rag-web-...` (the page; no PDFs are in S3).
 - Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
+- Delete the feedback loop's resources (step 9): the DynamoDB table, the KB correction index or S3 prefix, the `/api/feedback` route, and their IAM permissions. The `corrections` table goes with the Aurora cluster.
 - Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)
 - Remove the inline policy `rag-aurora-smoke` from the dev IAM user (if the user itself is not deleted first).
 - Delete the IAM user and its access keys.
@@ -685,5 +694,6 @@ Cycle 2 is done when:
 - The throttling, concurrency cap, and input limits are in place and tested.
 - The deployed evaluation records latency and cost per query.
 - The Knowledge Base pipeline is evaluated on the same 49 questions and compared with ours on retrieval and answers.
+- The feedback loop runs end to end (feedback, review, correction, publishing, retrieval check, regression check) on the Knowledge Base pipeline and on our pipeline, after that comparison.
 - The evaluation report and a recorded demo are in the repo.
 - The teardown checklist is complete and Billing confirms spending has stopped.
