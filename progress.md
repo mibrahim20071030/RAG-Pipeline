@@ -51,7 +51,8 @@ Next session (Cycle 2):
 - [x] 2026-10-23: step 8d console work done; deployed KB pass approved and run (48 of 49, $0.058).
 - [x] 2026-10-24: rebuilt zip uploaded (Claude checked it is live); `KB_DAILY_ASK_LIMIT` raised to 53; q49 asked.
 - [ ] Optional: set `KB_DAILY_ASK_LIMIT` back to 50 in the Lambda.
-- [ ] Step 8 PR (Claude lists the files).
+- [x] 2026-10-24: step 8 PR merged (#20, `0bbe078`).
+- [ ] Decide on the refusal-detection fix (widen `is_not_contained`, re-score saved runs, $0), then step 9a in plan mode.
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
 - [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
@@ -250,6 +251,11 @@ Cycle 2 (deploy, UI, report):
     `gen_prefix_k10` local run has 5/6; the other Layer 7 setups and both deployed passes have 6/6.
     - The difference is q44's reworded refusal, which `is_not_contained` misses.
     - `kb_compare.md` was corrected: q44 is not a KB win, and refusals are a tie.
+  - The human asked why Nova Lite rewords refusals. Explained: likely-text prediction, the "Sorry, I cannot" habit,
+    the long k = 10 context, and temperature 0 not being fully repeatable.
+    - Claude recommended a detection-only fix: wider `is_not_contained` plus a free re-score of the saved runs, no
+      prompt change, as its own small step before 9a. Not decided yet.
+  - Step 8 PR #20 merged (`0bbe078`).
 - `.env.example` lists `KB_ID`, and the Lambda's `KB_ID` and `KB_DAILY_ASK_LIMIT`. No bucket name, KB ID or
   account ID is in any repo file (checked).
 - `CLAUDE.md` updated: a step 8 entry in Current status, the design row and step 8 outline now describe the Managed

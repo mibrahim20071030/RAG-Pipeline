@@ -151,8 +151,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     from `rag/db.py`; the table stays on Aurora, unused.
   - Cap 50 a day (`DEPLOYED_DAILY_LIMIT`). A full deployed eval (98 asks) needs it raised for that day.
   - DynamoDB on-demand checked on 2026-10-23: $0.625 per million writes, $0.125 per million reads; TTL deletes free.
-- Cycle 2 step 8 (Managed Knowledge Base): BUILT on 2026-10-23 (single agent), deployed; the deployed KB pass,
-  the code review and the PR are still to come.
+- Cycle 2 step 8 (Managed Knowledge Base): DONE on 2026-10-24 (single agent), deployed, tested on both pipelines,
+  merged as PR #20 (`0bbe078`).
   - Plan: `C:\Users\muham\.claude\plans\plan-to-build-step-fluttering-quilt.md`. Setup in
     `datasheet-rag/runs/kb_setup.md`, results in `datasheet-rag/runs/kb_compare.md`.
   - The KB: Managed KB `datasheet-rag-kb`, data source `datasheets` on S3 bucket `datasheet-rag-kb-...` (the 4 PDFs
@@ -201,7 +201,10 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Code review done and recorded (1 of 2); 8 of 10 fixed, 848 tests pass. The fixed zip (22,748,347 bytes) is
     live (uploaded and checked 2026-10-24). The Lambda's `KB_DAILY_ASK_LIMIT` is 53 until set back to 50.
   - Step 8 spend: $0.12.
-- Next: the human opens the step 8 PR. Then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Next: a small refusal-detection fix, recommended on 2026-10-24 and not yet approved:
+  - widen `is_not_contained` to reworded refusals that cite nothing, with tests;
+  - re-score the saved runs for free; no prompt change.
+  Then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
@@ -663,7 +666,7 @@ Order of work, each with a test written when the step starts:
    4. Lower `API_DAILY_ASK_LIMIT` (for example 50), which bounds Aurora's awake time to about cap x 5 minutes a day.
    5. An off switch: a Lambda variable such as `DEMO_ENABLED=false` that answers 503 before anything else, or the console's Throttle (concurrency 0; VERIFY it is allowed with the account's quota of 10).
    Fixes 1, 3 and 5 live in the Lambda, so they hold for requests that come in on the `execute-api` address and skip CloudFront. The human creates the DynamoDB table and the Lambda role's permission in the console.
-8. **Knowledge Base pipeline, built in full, then both tested (added 2026-10-16, widened 2026-10-23; plan approved 2026-10-23, see Current status).** A **Bedrock Managed KB** (the human's choice on 2026-10-23, replacing the S3 Vectors plan, because it answers "build your own or let AWS handle it"):
+8. **Knowledge Base pipeline, built in full, then both tested (added 2026-10-16, widened 2026-10-23). DONE 2026-10-24 (PR #20), see Current status.** A **Bedrock Managed KB** (the human's choice on 2026-10-23, replacing the S3 Vectors plan, because it answers "build your own or let AWS handle it"):
    - AWS's managed parser, default chunking, managed embedder, hybrid search and managed reranker.
    - `Retrieve` gives the top 10, and our `generate()` writes the answer, so the answer step is identical and the comparison measures retrieval. The Managed KB has no `RetrieveAndGenerate`.
    - Same page with a toggle, the same `POST /api/ask` with a `pipeline` field, the same limits; the KB path never touches Aurora.
