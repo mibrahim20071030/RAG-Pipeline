@@ -201,10 +201,11 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - About $0.0012 a question for the KB, against $0.0041 for ours with Aurora.
     - q21's first answer was lost between CloudFront and the client and was resent.
   - Code review done and recorded (1 of 2); 8 of 10 fixed, 848 tests pass. The fixed zip (22,748,347 bytes) is
-    live (uploaded and checked 2026-10-24). The Lambda's `KB_DAILY_ASK_LIMIT` is 53 until set back to 50.
+    live (uploaded and checked 2026-10-24). The Lambda's `KB_DAILY_ASK_LIMIT` is back to 50 (checked 2026-10-24).
   - Step 8 spend: $0.12.
-- Refusal-detection fix: BUILT on 2026-10-24 (single agent, plan approved the same day), waiting for the human's
-  PR and a zip upload. No paid call; the prompt is unchanged.
+- Refusal-detection fix: DONE on 2026-10-24 (single agent), merged as PR #21 (`919ac80`), deployed.
+  - Checked live: Lambda code size 22,748,983 bytes; the served page equals the local file.
+  - No paid call; the prompt is unchanged.
   - `generate.is_not_contained` has a third rule: no valid source, plus `_MISSING` plus `_SOURCE_MATERIAL`.
     - `_MISSING`: cannot provide / be determined, does not contain / mention / specify, not or n't mentioned /
       specified / provided, no information, ...
@@ -238,7 +239,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - "Response details" uses the same names;
     - the API values stay `ours` / `kb`;
     - on a phone the toggle gets its own row.
-- Next: the refusal fix's PR and zip, then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Next: step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).

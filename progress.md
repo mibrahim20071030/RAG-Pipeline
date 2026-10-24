@@ -50,11 +50,11 @@ Next session (Cycle 2):
 - [x] 2026-10-23: local KB eval approved and run ($0.0588).
 - [x] 2026-10-23: step 8d console work done; deployed KB pass approved and run (48 of 49, $0.058).
 - [x] 2026-10-24: rebuilt zip uploaded (Claude checked it is live); `KB_DAILY_ASK_LIMIT` raised to 53; q49 asked.
-- [ ] Optional: set `KB_DAILY_ASK_LIMIT` back to 50 in the Lambda.
+- [x] 2026-10-24: `KB_DAILY_ASK_LIMIT` back to 50 (checked by Claude).
 - [x] 2026-10-24: step 8 PR merged (#20, `0bbe078`).
 - [x] 2026-10-24: step 8 walkthrough PDF written (`AI-Eng Portfolio\P2 Walkthroughs\Step8_Walkthrough.pdf`); read it when convenient.
 - [x] 2026-10-24: refusal-detection fix plan approved and built.
-- [ ] Upload the rebuilt `build\lambda.zip` (22,748,983 bytes) and click Save; upload `web\index.html` to the page bucket and invalidate `/index.html`; open the PR for the refusal fix.
+- [x] 2026-10-24: refusal fix deployed (zip, page, invalidation) and merged (#21, `919ac80`).
 - [ ] Then step 9a (PDF upload) in plan mode.
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
@@ -161,6 +161,50 @@ Cycle 2 (deploy, UI, report):
 - [ ] 9c. Both pipelines tested again.
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-24 — Session 23: step 8 finished and merged; refusal-detection fix; toggle renamed
+
+This session ran past midnight (UTC and local), so its first half is logged under Session 22. In short:
+
+- **Step 8 (Managed KB) finished:**
+  - deployed KB pass 49/49 (q49 after the human raised the KB cap to 53, now back to 50);
+  - code review 1 of 2, 8 of 10 fixed;
+  - merged as PR #20 (`0bbe078`).
+  - Results: ours R@5 0.977 against 0.860, citation hit 0.930 against 0.837, cost $0.0041 against $0.0012 a
+    question; the KB never wakes Aurora.
+- **Lost answer explained:** q21's first send was answered in Lambda but never reached the client, so it was resent
+  and used a cap place. Where it was lost is not known; the API Gateway access log could show it, but the dev user
+  cannot read it.
+- **Refusal question:** the human asked why ours showed 5/6 unanswerable refused when Cycle 1 showed 6/6.
+  - Only the frozen `gen_prefix_k10` run had 5/6, because of q44's reworded refusal.
+  - So q44 was not a KB win.
+  - Explained why Nova Lite rewords refusals (likely-text prediction, the "Sorry, I cannot" habit, long context,
+    temperature 0 not fully repeatable).
+- **Refusal-detection fix** (planned in plan mode, approved, built, reviewed, merged as PR #21 `919ac80`, deployed):
+  - wider `is_not_contained`;
+  - `scripts/rescore_refusals.py`;
+  - the page shows reworded refusals under the notice.
+  - Only q44 changed of 493 saved answers.
+- **Toggle renamed** at the human's request: "Search engine: Custom pipeline / AWS managed", with tooltips.
+- **Step 8 walkthrough** written as a PDF for later reading: `AI-Eng Portfolio\P2 Walkthroughs\Step8_Walkthrough.pdf`.
+
+Problems hit (what, why, fix):
+- The first re-score dry run stopped on its own safety check.
+  - Why: older Layer 7 rows keep label pages in `cited` for refusals of the "sentence, then only labels" kind.
+  - Fix: the check now applies only to rows whose flag changes.
+- The code review found three more problems:
+  - "provided" was in both refusal patterns, so one phrase satisfied both;
+  - an uncited partial answer would have been hidden by the notice;
+  - the deployed summary was patched by hand, so `same_as_local` went stale.
+  - All three were fixed. The rebuild moved our deployed `same_as_local` to 47/49 and 46/49.
+- The walkthrough PDF was first saved inside the repo, and the secret scan blocks PDFs there. It was moved outside.
+- A path too long for Windows stopped `pypdfium2` installing in a scratch venv. pdfplumber in the project venv was
+  used to render pages instead.
+
+Open:
+- step 9a (PDF upload), in plan mode, when the human says so;
+- the two catch-up walkthrough sessions (Cycle 1; Cycle 2 steps 1–7);
+- the docs commit of this entry (waiting for the human's yes).
 
 ## 2026-10-23 — Session 22: step 8 planned (Managed Knowledge Base), 8a scripts written
 
@@ -295,6 +339,9 @@ Cycle 2 (deploy, UI, report):
   - Zip rebuilt (22,748,983 bytes); `web/index.html` changed too.
   - The human asked for a clearer toggle and chose "Search engine: Custom pipeline / AWS managed" with tooltips. The
     API values are unchanged. Checked in headless Edge at 1280 and 500 px.
+  - PR #21 merged (`919ac80`).
+  - Claude checked the deployment: Lambda code size 22,748,983 bytes, the served page equals the local file, the
+    free refusals unchanged, and the KB cap is 50.
 - `.env.example` lists `KB_ID`, and the Lambda's `KB_ID` and `KB_DAILY_ASK_LIMIT`. No bucket name, KB ID or
   account ID is in any repo file (checked).
 - `CLAUDE.md` updated: a step 8 entry in Current status, the design row and step 8 outline now describe the Managed
