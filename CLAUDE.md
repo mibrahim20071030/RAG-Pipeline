@@ -239,7 +239,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - "Response details" uses the same names;
     - the API values stay `ours` / `kb`;
     - on a phone the toggle gets its own row.
-- Cycle 2 step 9a (PDF upload): BUILT on 2026-10-24 (single agent), waiting for the console work. Plan:
+- Cycle 2 step 9a (PDF upload): DONE on 2026-10-24 (single agent), deployed, checked on both pipelines, merged as
+  PR #22 (`7f605b9`). Plan:
   `C:\Users\muham\.claude\plans\alright-so-if-there-serene-papert.md`; console guide and doc checks in
   `datasheet-rag/runs/upload_setup.md`. Code review done and recorded (1 of 2), 10 of 10 fixed; 1,227 tests pass.
   - Limits (the human's choice): 10 MB, 100 pages, 300 chunks, 5 uploads a day (`UPLOAD_DAILY_LIMIT`, kind
@@ -267,8 +268,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     without `upload_id` the upload is not searched; the 49 KB `Retrieve` keep their step 8 first correct ranks.
   - Page tidied on 2026-10-24 (steps without descriptions; paperclip upload and status chip inside the question box;
     datasheet and pipeline behind one options button). Walkthrough written: `walkthroughs/Step9a_Walkthrough.pdf`.
-  - Open: both Lambda ask caps back to 50 (doubled for the test), the tidied page uploaded and invalidated, the
-    human's PR.
+  - Closed on 2026-10-24: both Lambda ask caps back to 50 (checked), the tidied page live (equal to the local file
+    once line endings are compared the same way), merged as PR #22.
 - Next after 9a: 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.

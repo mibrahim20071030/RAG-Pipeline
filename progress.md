@@ -58,10 +58,10 @@ Next session (Cycle 2):
 - [x] 2026-10-24: step 9a plan approved (10 MB, 100 pages, 300 chunks, 5 a day, 24 h; KB `uploads` data source).
 - [x] 2026-10-24: step 9a console work in `datasheet-rag/runs/upload_setup.md` done; Claude's free checks passed.
 - [x] 2026-10-24: test PDF picked, paid checks approved, both ask caps doubled for the day.
-- [ ] After the upload test: set `API_DAILY_ASK_LIMIT` and `KB_DAILY_ASK_LIMIT` on `datasheet-rag` back to `50`.
-- [ ] Upload the tidied `web\index.html` to the page bucket and invalidate `/index.html`, then tell Claude to check it.
+- [x] 2026-10-24: After the upload test: set `API_DAILY_ASK_LIMIT` and `KB_DAILY_ASK_LIMIT` on `datasheet-rag` back to `50`.
+- [x] 2026-10-24: Upload the tidied `web\index.html` to the page bucket and invalidate `/index.html`, then tell Claude to check it.
 - [ ] Read `walkthroughs/Step9a_Walkthrough.pdf` when convenient.
-- [ ] Step 9a PR: branch, commit, PR, merge.
+- [x] 2026-10-24: Step 9a PR: branch, commit, PR, merge.
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
 - [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
@@ -168,7 +168,7 @@ Cycle 2 (deploy, UI, report):
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
 
-## 2026-10-24 — Session 24: Cycle 2 step 9a (PDF upload) planned and built, waiting for the console work
+## 2026-10-24 — Session 24: Cycle 2 step 9a (PDF upload) planned, built, deployed, checked and merged (#22)
 
 - Walkthrough PDFs: `Step8_Walkthrough.pdf` moved from `AI-Eng Portfolio\P2 Walkthroughs` into
   `P2 - RAG Pipeline\walkthroughs\` (gitignored through `.git/info/exclude`); the empty folder was removed.
@@ -247,7 +247,11 @@ Cycle 2 (deploy, UI, report):
   tests and review, results, snags, how to explain it, known limits). Built with ReportLab in a scratch venv, so the
   project's requirements are unchanged.
 - Both zips are newer than every `.py` file, so the live Lambdas run the repo's code.
-- **Open:** upload the new page and invalidate; set both Lambda ask caps back to 50; the human's PR.
+- **Closed:** the tidied page is live (equal to `web/index.html`; a first byte compare differed only because the
+  local file was read in text mode, which drops the `
+` of Windows line endings); the Lambda caps read 50 / 50 and
+  uploads 5; merged as PR #22 (`7f605b9`).
+- **Next:** 9b (feedback loop on both pipelines), in plan mode, when the human says so.
 
 ## 2026-10-24 — Session 23: step 8 finished and merged; refusal-detection fix; toggle renamed
 
