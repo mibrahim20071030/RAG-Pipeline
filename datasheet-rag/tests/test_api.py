@@ -8,7 +8,7 @@ import psycopg
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from rag import api, config, db
+from rag import api, config, costlog, db, uploads
 
 DOCS = [
     {"id": 1, "name": "esp32_datasheet_en", "file": "esp32_datasheet_en.pdf", "part": "ESP32", "revision": "Version 5.3"},
@@ -44,6 +44,7 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "PDF_DIR", pdfs)
     monkeypatch.setattr(config, "COST_LOG", tmp_path / "cost_log.csv")
     monkeypatch.setattr(db, "list_documents", lambda conn: DOCS)
+    monkeypatch.setattr(db, "delete_expired_uploads", lambda conn: 0)
     monkeypatch.setattr(config, "DOCUMENTS", VENDOR)
 
 
@@ -117,7 +118,7 @@ def test_answer_shape():
     assert body["setup"]["strategy"] == config.DEFAULT_STRATEGY and body["setup"]["passages"] == config.TOP_K
     assert body["sources"] == [{
         "label": 1, "document": "lm35", "part": "LM35", "page": 4, "page_label": "3",
-        "title": "LM35 (lm35), page 4, printed page 3", "pdf_url": "/pdfs/lm35.pdf#page=4",
+        "title": "LM35 (lm35), page 4, printed page 3", "pdf_url": "/pdfs/lm35.pdf#page=4", "upload": False,
     }]
 
 
@@ -523,3 +524,239 @@ def test_kb_place_goes_back_when_nothing_was_paid(monkeypatch):
     counter = KindCounter()
     status, _ = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(raises=RuntimeError("KB_ID is not set")), counter)
     assert status == 502 and counter.counts["kb_asks"] == 0
+
+
+# ---------------------------------------------------------------- uploads (Cycle 2 step 9a)
+
+UPLOAD_ID = "0123456789abcdef"
+UPLOAD_DOC = "upload-" + UPLOAD_ID
+
+
+def upload_store(**fields):
+    """A memory store holding one upload, ready on our pipeline unless `fields` say otherwise."""
+    store = uploads.MemoryStore()
+    store.create({**uploads.new_record(UPLOAD_ID, "My Sensor.pdf", kb=True), "status": "ready", "ours": "ready",
+                  "kb": "syncing", "pages": 3, "chunks": 9, **fields})
+    return store
+
+
+def upload_result():
+    return result(sources=[{"label": 1, "id": 9, "document": UPLOAD_DOC, "page": 2, "page_label": "2"}],
+                  passages=[{"id": 9, "document": UPLOAD_DOC, "page": 2, "text": "VDD 5 V"}])
+
+
+def test_question_about_an_upload_searches_that_upload_only():
+    seen, opener = {}, Opener()
+    status, body = api.ask({"question": "Supply voltage?", "upload_id": UPLOAD_ID}, opener,
+                           fake_answer(upload_result(), seen=seen), upload_store=upload_store())
+    assert status == 200 and seen["document"] == UPLOAD_DOC and opener.opened == 1
+    source = body["sources"][0]
+    assert source["upload"] is True and source["pdf_url"] is None and source["part"] == "My Sensor"
+
+
+def test_upload_named_my_own_datasheet_file_never_links_a_local_pdf():
+    # lm35.pdf is on disk in this test; an upload with that file name must still not link to it.
+    store = upload_store(filename="lm35.pdf")
+    status, body = api.ask({"question": "q", "upload_id": UPLOAD_ID}, Opener(), fake_answer(upload_result()),
+                           upload_store=store)
+    assert status == 200 and body["sources"][0]["pdf_url"] is None
+
+
+def test_kb_question_about_an_upload_filters_on_its_name():
+    seen = {}
+    status, _ = api.ask({"question": "q", "upload_id": UPLOAD_ID, "pipeline": "kb"}, Opener(),
+                           kb_answer_fn=fake_kb(seen=seen), upload_store=upload_store(kb="ready"))
+    assert status == 200 and seen["document"] == UPLOAD_DOC
+
+
+@pytest.mark.parametrize(("fields", "pipeline_name", "status", "words"), [
+    ({"status": "ingesting", "ours": "waiting"}, "ours", 409, "not ready"),
+    ({}, "kb", 409, "not ready"),  # KB still syncing
+    ({"kb": "off"}, "kb", 409, "Custom pipeline"),
+    ({"kb": "failed"}, "kb", 409, "Custom pipeline"),
+    ({"status": "failed", "ours": "failed", "kb": "off", "error": "The PDF is scanned."}, "ours", 409, "scanned"),
+])
+def test_upload_not_ready_is_refused_before_counting_or_connecting(fields, pipeline_name, status, words):
+    counter, opener = KindCounter(), Opener()
+    got, body = api.ask({"question": "q", "upload_id": UPLOAD_ID, "pipeline": pipeline_name}, opener,
+                        fake_answer(), counter, fake_kb(), upload_store=upload_store(**fields))
+    assert got == status and words in body["error"]
+    assert counter.taken == [] and opener.opened == 0
+
+
+@pytest.mark.parametrize("upload_id", ["ffffffffffffffff", "not-an-id", 12])
+def test_unknown_or_malformed_upload_is_refused(upload_id):
+    opener = Opener()
+    status, body = api.ask({"question": "q", "upload_id": upload_id}, opener, fake_answer(),
+                           upload_store=upload_store())
+    assert status in (400, 404) and "not known" in body["error"] and opener.opened == 0
+
+
+def test_upload_and_datasheet_together_are_refused():
+    status, body = api.ask({"question": "q", "upload_id": UPLOAD_ID, "document": "lm35"}, Opener(), fake_answer(),
+                           upload_store=upload_store())
+    assert status == 400 and "not both" in body["error"]
+
+
+def test_upload_store_that_does_not_answer_gives_503():
+    class Broken:
+        def get(self, upload_id):
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "no table"}}, "GetItem")
+
+    status, body = api.ask({"question": "q", "upload_id": UPLOAD_ID}, Opener(), fake_answer(), upload_store=Broken())
+    assert status == 503 and body["error"] == api.BUSY
+
+
+def test_question_without_an_upload_never_reads_the_store():
+    class Untouchable:
+        def get(self, upload_id):
+            raise AssertionError("read")
+
+    status, _ = api.ask({"question": "q"}, Opener(), fake_answer(), upload_store=Untouchable())
+    assert status == 200
+
+
+# ---- starting an upload
+
+def presign(upload_id):
+    return {"post": {"url": "https://bucket.s3.amazonaws.com/", "fields": {"key": f"incoming/{upload_id}.pdf"}}}
+
+
+@pytest.mark.parametrize(("payload", "status", "words"), [
+    (["x"], 400, "JSON object"),
+    ({"filename": "notes.txt", "size": 10}, 400, ".pdf"),
+    ({"filename": "s.pdf", "size": 0}, 400, "empty"),
+    ({"filename": "s.pdf", "size": "10"}, 400, "empty"),
+    ({"filename": "s.pdf", "size": True}, 400, "empty"),
+    ({"filename": "s.pdf", "size": 11 * 1024 * 1024}, 413, "larger than 10 MB"),
+])
+def test_start_upload_refuses_bad_requests_without_counting(payload, status, words, monkeypatch):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 5)
+    counter, store = KindCounter(), uploads.MemoryStore()
+    got, body = api.start_upload(payload, store, presign, counter)
+    assert got == status and words in body["error"] and counter.taken == []
+    assert store.take_lock("free", 1)  # never taken
+
+
+def test_start_upload_makes_a_record_and_a_presigned_post(monkeypatch):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 5)
+    counter, store = KindCounter(), uploads.MemoryStore()
+    status, body = api.start_upload({"filename": r"C:\fakepath\My Sensor.pdf", "size": 2000}, store, presign,
+                                    counter, to_kb=True)
+    assert status == 200 and uploads.valid_id(body["upload_id"])
+    assert body["filename"] == "My Sensor.pdf" and body["post"]["fields"]["key"] == f"incoming/{body['upload_id']}.pdf"
+    assert body["limits"]["max_bytes"] == config.UPLOAD_MAX_BYTES
+    record = store.get(body["upload_id"])
+    assert record["status"] == "waiting" and record["kb"] == "waiting"
+    assert counter.counts == {"uploads": 1}
+    assert not store.take_lock("next-upload", 1)  # one at a time
+
+
+def test_second_upload_while_one_is_processed_is_refused_and_not_counted(monkeypatch):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 5)
+    counter, store = KindCounter(), uploads.MemoryStore()
+    assert api.start_upload({"filename": "a.pdf", "size": 10}, store, presign, counter)[0] == 200
+    status, body = api.start_upload({"filename": "b.pdf", "size": 10}, store, presign, counter)
+    assert status == 429 and body["error"] == api.UPLOAD_BUSY and "limit" not in body
+    assert counter.counts == {"uploads": 1}  # the refused one gave its place back
+
+
+def test_daily_upload_limit(monkeypatch):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 1)
+    counter = KindCounter()
+    assert api.start_upload({"filename": "a.pdf", "size": 10}, uploads.MemoryStore(), presign, counter)[0] == 200
+    status, body = api.start_upload({"filename": "b.pdf", "size": 10}, uploads.MemoryStore(), presign, counter)
+    assert status == 429 and body["limit"] == "daily" and body["error"] == api.UPLOAD_DAILY_LIMIT
+
+
+def test_no_upload_limit_never_counts(monkeypatch):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 0)
+    counter = KindCounter()
+    assert api.start_upload({"filename": "a.pdf", "size": 10}, uploads.MemoryStore(), presign, counter)[0] == 200
+    assert counter.taken == []
+
+
+def test_presign_failure_gives_the_lock_and_place_back(monkeypatch, capsys):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 5)
+
+    def broken(upload_id):
+        raise RuntimeError("UPLOAD_BUCKET is not set.")
+
+    counter, store = KindCounter(), uploads.MemoryStore()
+    status, _ = api.start_upload({"filename": "a.pdf", "size": 10}, store, broken, counter)
+    assert status == 503 and counter.counts == {"uploads": 0} and store.take_lock("free", 1)
+
+
+# ---- an upload's status
+
+def test_upload_status_shows_the_public_record():
+    status, body = api.upload_status(UPLOAD_ID, upload_store(kb_job="JOB1234567"))
+    assert status == 200 and body["upload_id"] == UPLOAD_ID and body["ours"] == "ready"
+    assert "kb_job" not in body
+
+
+@pytest.mark.parametrize("upload_id", ["ffffffffffffffff", "../x", ""])
+def test_upload_status_of_unknown_upload_is_404(upload_id):
+    assert api.upload_status(upload_id, upload_store())[0] == 404
+
+
+@pytest.mark.parametrize(("job", "failed", "kb_state"), [
+    ("IN_PROGRESS", 0, "syncing"), ("COMPLETE", 0, "ready"), ("COMPLETE", 1, "failed"), ("FAILED", 0, "failed"),
+    ("STOPPED", 0, "failed"),
+])
+def test_upload_status_follows_the_kb_job(job, failed, kb_state):
+    store, asked = upload_store(kb_job="JOB1234567"), []
+
+    def kb_status(job_id):
+        asked.append(job_id)
+        return job, failed
+
+    status, body = api.upload_status(UPLOAD_ID, store, kb_status)
+    assert status == 200 and body["kb"] == kb_state and asked == ["JOB1234567"]
+    assert store.get(UPLOAD_ID)["kb"] == kb_state
+
+
+def test_upload_status_does_not_ask_the_kb_once_it_is_settled():
+    def kb_status(job_id):
+        raise AssertionError("asked")
+
+    assert api.upload_status(UPLOAD_ID, upload_store(kb="ready", kb_job="JOB1234567"), kb_status)[0] == 200
+
+
+def test_upload_status_keeps_syncing_when_the_kb_does_not_answer(capsys):
+    def kb_status(job_id):
+        raise ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "GetIngestionJob")
+
+    status, body = api.upload_status(UPLOAD_ID, upload_store(kb_job="JOB1234567"), kb_status)
+    assert status == 200 and body["kb"] == "syncing"
+
+
+def test_a_kb_question_refreshes_a_syncing_upload_when_the_page_stopped_polling():
+    store = upload_store(kb_job="JOB1234567")
+    status, _ = api.ask({"question": "q", "upload_id": UPLOAD_ID, "pipeline": "kb"}, Opener(),
+                        kb_answer_fn=fake_kb(), upload_store=store, kb_status=lambda job: ("COMPLETE", 0))
+    assert status == 200 and store.get(UPLOAD_ID)["kb"] == "ready"
+
+
+def test_a_kb_question_on_a_still_syncing_upload_is_409():
+    status, body = api.ask({"question": "q", "upload_id": UPLOAD_ID, "pipeline": "kb"}, Opener(),
+                           kb_answer_fn=fake_kb(), upload_store=upload_store(kb_job="JOB1234567"),
+                           kb_status=lambda job: ("IN_PROGRESS", 0))
+    assert status == 409 and "not ready" in body["error"]
+
+
+def test_expired_uploads_are_deleted_when_a_question_connects(monkeypatch):
+    deleted = []
+    monkeypatch.setattr(db, "delete_expired_uploads", lambda conn: deleted.append(conn) or 0)
+    assert ask({"question": "q"}, fake_answer())[0] == 200
+    assert len(deleted) == 1
+
+
+def test_an_upload_embedding_in_the_background_is_not_a_questions_cost(monkeypatch):
+    def answer(conn, question, document=None):
+        costlog.log_cost(costlog.UPLOAD_OPERATION + "0123456789abcdef", "titan", "input_tokens", 1000, 0.5)
+        costlog.log_cost("generate", "nova", "input_tokens", 10, 0.001)
+        return result()
+
+    status, body = ask({"question": "q"}, answer)
+    assert status == 200 and body["spent_usd"] == pytest.approx(0.001)

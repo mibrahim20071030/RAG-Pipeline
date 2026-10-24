@@ -6,6 +6,10 @@ Run from datasheet-rag:  python -m rag.server            then open http://127.0.
 Standard library only. It listens on 127.0.0.1, so only this machine can reach it: every question it answers
 is paid for on the AWS account. One request at a time, on one database connection that is opened again after
 Postgres restarts.
+
+Uploads (step 9a): POST /api/uploads makes a place, the page then PUTs the PDF to /api/uploads/<id>/file, and the
+upload is ingested in a background thread on its own connection, for our pipeline only (the Knowledge Base is in the
+cloud). Records are kept in memory, so they go when the server stops; the stored chunks expire after 24 hours.
 """
 import argparse
 import contextlib
@@ -13,6 +17,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -20,7 +25,7 @@ from urllib.parse import unquote, urlsplit
 
 import psycopg
 
-from rag import api, config, db
+from rag import api, config, db, uploads
 
 _HTML_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -34,11 +39,14 @@ _HTML_HEADERS = {
 class _State:
     """What the handler needs: a database connection made on demand, and the functions it calls."""
 
-    def __init__(self, connect, ask, documents, web_dir, pdf_dir):
+    def __init__(self, connect, ask, documents, web_dir, pdf_dir, ingest=None):
         self.connect, self.ask, self.documents = connect, ask, documents
         self.web_dir, self.pdf_dir = web_dir, pdf_dir
         self._conn = None
         self._pdf_files = None
+        self.uploads = uploads.MemoryStore()
+        # ingest(store, upload_id, data, connect) runs one upload; by default in a background thread.
+        self.ingest = ingest or _ingest_in_background
 
     def pdf_files(self) -> set[str]:
         """File names of the stored datasheets that are on disk: the only files /pdfs/ serves. Read from the
@@ -54,6 +62,17 @@ class _State:
         if self._conn is None or self._conn.closed or self._conn.broken:
             self._conn = self.connect()
         return self._conn
+
+
+def _ingest_in_background(store, upload_id: str, data: bytes, connect) -> None:
+    from rag import ingest  # pdfplumber, only when an upload is made
+
+    def run():
+        final = ingest.run_upload(store, upload_id, data, connect, to_kb=False)
+        print(f"  upload {upload_id}: {final.get('status')}"
+              f"{', ' + str(final.get('chunks')) + ' chunks' if final.get('chunks') else ''}"
+              f"{' (' + final['error'] + ')' if final.get('error') else ''}", flush=True)
+    threading.Thread(target=run, name=f"upload-{upload_id}", daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -103,14 +122,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._page()
         if path == "/api/documents":
             return self._documents()
+        if path.startswith("/api/uploads/") and path.count("/") == 3:
+            return self._json(*api.upload_status(path.removeprefix("/api/uploads/"), self.server.state.uploads))
         if path.startswith("/pdfs/"):
             return self._pdf(unquote(path.removeprefix("/pdfs/")))
         return self._not_found()
 
     do_HEAD = do_GET
 
-    def _read_body(self) -> tuple[bytes | None, bool]:
-        """(body, too_large); body is None when it is missing or too large. Always read before any answer: closing
+    def _read_body(self, limit: int = config.API_MAX_BODY_BYTES) -> tuple[bytes | None, bool]:
+        """(body, too_large); body is None when it is missing or over `limit`. Always read before any answer: closing
         with the body unread makes Windows reset the connection, and the client sees that instead of the answer."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -118,8 +139,8 @@ class Handler(BaseHTTPRequestHandler):
             length = 0
         if length <= 0:
             return None, False
-        body = self.rfile.read(min(length, 1_000_000))
-        if length > config.API_MAX_BODY_BYTES:
+        body = self.rfile.read(min(length, max(limit, 1_000_000)))
+        if length > limit:
             self.close_connection = True
             return None, True
         return body, False
@@ -128,7 +149,8 @@ class Handler(BaseHTTPRequestHandler):
         raw, too_large = self._read_body()
         if not self._host_ok():
             return self._json(403, {"error": "Open the page at http://127.0.0.1."})
-        if urlsplit(self.path).path != "/api/ask":
+        path = urlsplit(self.path).path
+        if path not in ("/api/ask", "/api/uploads"):
             return self._not_found()
         # A JSON content type cannot be sent across sites without a CORS preflight, which is never answered.
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
@@ -141,10 +163,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "The request body is not valid JSON."})
 
         state: _State = self.server.state
+        if path == "/api/uploads":
+            presign = lambda upload_id: {"put_url": f"/api/uploads/{upload_id}/file"}
+            return self._json(*api.start_upload(payload, state.uploads, presign))
         start = time.perf_counter()
         try:
             # The kept connection, made only when the question passed its checks; this server never closes it.
-            status, body = state.ask(payload, lambda: contextlib.nullcontext(state.conn()))
+            status, body = state.ask(payload, lambda: contextlib.nullcontext(state.conn()),
+                                     upload_store=state.uploads)
         except Exception:  # noqa: BLE001 (any other failure still gets an answer the page can show)
             traceback.print_exc()
             status, body = 500, {"error": "The server hit an unexpected error. Its console has the details."}
@@ -153,6 +179,29 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  {status}  {elapsed:5.1f} s  {f'${spent:.4f}' if spent is not None else '       '}  "
               f"{str(payload.get('question', ''))[:70] if isinstance(payload, dict) else ''}", flush=True)
         self._json(status, body)
+
+    def do_PUT(self) -> None:
+        """The PDF of an upload made with POST /api/uploads: PUT /api/uploads/<id>/file, sent once."""
+        raw, too_large = self._read_body(config.UPLOAD_MAX_BYTES)
+        if not self._host_ok():
+            return self._json(403, {"error": "Open the page at http://127.0.0.1."})
+        parts = urlsplit(self.path).path.split("/")  # ["", "api", "uploads", "<id>", "file"]
+        if len(parts) != 5 or parts[:3] != ["", "api", "uploads"] or parts[4] != "file":
+            return self._not_found()
+        upload_id = parts[3]
+        if not (self.headers.get("Content-Type") or "").startswith("application/pdf"):
+            return self._json(415, {"error": "Send the file as application/pdf."})
+        if raw is None:
+            return self._json(413 if too_large else 400, {"error": "The file is missing or too large."})
+        state: _State = self.server.state
+        record = state.uploads.get(upload_id) if uploads.valid_id(upload_id) else None
+        if record is None or record["status"] != "waiting":
+            return self._json(404, {"error": api.UPLOAD_UNKNOWN})
+        # Off "waiting" before the thread starts, so a second PUT (a retry, a double click) cannot start another.
+        state.uploads.update(upload_id, status="ingesting")
+        state.ingest(state.uploads, upload_id, raw, state.connect)
+        print(f"  upload {upload_id}: {len(raw):,} bytes received", flush=True)
+        self._json(202, uploads.public(state.uploads.get(upload_id) or record))
 
     def _page(self) -> None:
         page = self.server.state.web_dir / "index.html"
@@ -191,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args) -> None:
         """Quiet: questions are printed by do_POST; everything else only when it fails."""
-        if len(args) >= 2 and str(args[1]).startswith(("4", "5")) and self.command != "POST":
+        if len(args) >= 2 and str(args[1]).startswith(("4", "5")) and self.command not in ("POST", "PUT"):
             sys.stderr.write(f"  {args[1]}  {self.command} {self.path}\n")
 
 
@@ -202,11 +251,11 @@ class _Server(HTTPServer):
 
 
 def make_server(host: str | None = None, port: int | None = None, connect=None, ask=None, documents=None,
-                web_dir=None, pdf_dir=None) -> HTTPServer:
+                web_dir=None, pdf_dir=None, ingest=None) -> HTTPServer:
     """The HTTP server, not yet serving. Everything left as None comes from config and the real modules."""
     server = _Server((host or config.SERVER_HOST, config.SERVER_PORT if port is None else port), Handler)
     server.state = _State(connect or db.connect, ask or api.ask, documents or api.documents,
-                          web_dir or config.WEB_DIR, pdf_dir or config.PDF_DIR)
+                          web_dir or config.WEB_DIR, pdf_dir or config.PDF_DIR, ingest)
     return server
 
 

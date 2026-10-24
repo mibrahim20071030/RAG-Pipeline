@@ -55,7 +55,13 @@ Next session (Cycle 2):
 - [x] 2026-10-24: step 8 walkthrough PDF written (`AI-Eng Portfolio\P2 Walkthroughs\Step8_Walkthrough.pdf`); read it when convenient.
 - [x] 2026-10-24: refusal-detection fix plan approved and built.
 - [x] 2026-10-24: refusal fix deployed (zip, page, invalidation) and merged (#21, `919ac80`).
-- [ ] Then step 9a (PDF upload) in plan mode.
+- [x] 2026-10-24: step 9a plan approved (10 MB, 100 pages, 300 chunks, 5 a day, 24 h; KB `uploads` data source).
+- [x] 2026-10-24: step 9a console work in `datasheet-rag/runs/upload_setup.md` done; Claude's free checks passed.
+- [x] 2026-10-24: test PDF picked, paid checks approved, both ask caps doubled for the day.
+- [ ] After the upload test: set `API_DAILY_ASK_LIMIT` and `KB_DAILY_ASK_LIMIT` on `datasheet-rag` back to `50`.
+- [ ] Upload the tidied `web\index.html` to the page bucket and invalidate `/index.html`, then tell Claude to check it.
+- [ ] Read `walkthroughs/Step9a_Walkthrough.pdf` when convenient.
+- [ ] Step 9a PR: branch, commit, PR, merge.
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
 - [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
@@ -161,6 +167,87 @@ Cycle 2 (deploy, UI, report):
 - [ ] 9c. Both pipelines tested again.
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-24 — Session 24: Cycle 2 step 9a (PDF upload) planned and built, waiting for the console work
+
+- Walkthrough PDFs: `Step8_Walkthrough.pdf` moved from `AI-Eng Portfolio\P2 Walkthroughs` into
+  `P2 - RAG Pipeline\walkthroughs\` (gitignored through `.git/info/exclude`); the empty folder was removed.
+- **Plan approved** (`C:\Users\muham\.claude\plans\alright-so-if-there-serene-papert.md`). The human's choices:
+  - limits 10 MB, 100 pages, 300 chunks, 5 uploads a day for everyone, kept 24 h;
+  - KB uploads in a second data source `uploads` in the same Managed KB.
+- **9a-1 verified in the docs** (`datasheet-rag/runs/upload_setup.md`):
+  - Managed KB filters and the reserved `_data_source_id` key;
+  - the S3 data source's prefixes, sidecars and incremental sync;
+  - the ingestion job fields;
+  - presigned POST conditions;
+  - cp314 Linux wheels for pdfplumber's dependencies.
+  - A filter on `_data_source_id` is not shown in the docs, so a probe checks it after the console work.
+- **9a-2 code built** (single agent):
+  - `rag/uploads.py`: ids, file names, records and the one-at-a-time lock (DynamoDB or memory), presigned POST.
+  - `rag/ingest.py`: check, parse, chunk, paced embed (40 a minute), store, KB hand-off, `run_upload`.
+  - `rag/db.py`: `documents.source` / `title` / `expires_at`; searches that name no document read only curated
+    rows; `store_upload_document`, `delete_expired_uploads`.
+  - `rag/api.py`: `upload_id` on `/api/ask`, `start_upload`, `upload_status`.
+  - `rag/kb.py`: curated data source filter, `start_ingestion`, `ingestion_status`.
+  - `handler.py`: two upload routes and `ingest_handler`.
+  - `rag/server.py`: local upload via PUT and a background thread (our pipeline only).
+  - The page: upload control, progress, "Your PDF" option, "Open page" from the visitor's own copy.
+  - `scripts/build_lambda.py` builds `build/ingest.zip` (46.5 MB) next to `lambda.zip` (22.8 MB);
+    `scripts/call_api.py` has `upload` and `upload-status`.
+  - Tests: `tests/test_uploads.py`, `tests/test_ingest.py`, and additions to the api, handler, kb, server, page and
+    generate tests. 1,011 pass without Docker.
+  - An upload's file name never reaches the prompt: its passages are labelled "Uploaded PDF (upload-<id>)".
+- Problem: the Postgres tests skipped at first because Docker Desktop was not running. It is installed per user
+  (`%LOCALAPPDATA%\Programs\DockerDesktop`), not in Program Files; Claude started it and `rag-pg`.
+- **Code review** done and recorded (1 of 2). All 10 findings fixed:
+  - a second local PUT can no longer start a second ingest;
+  - a KB question refreshes a syncing upload, so the KB side becomes ready even when the page stopped polling;
+  - the page keeps a ready status and the visitor's own datasheet choice while AWS managed indexes;
+  - an ingest whose lock was taken by another upload stops;
+  - no upload is sent to the KB, and no unfiltered KB search runs, without `KB_CURATED_DATA_SOURCE_ID`;
+  - a local upload's Titan rows are not counted in a question's cost;
+  - `count_chunks`, `strategy_counts` and `mean_chunk_tokens` count curated rows only;
+  - the database is connected only after embedding;
+  - expired uploads are also deleted when a question connects.
+  - Two cleanups: the DynamoDB helpers are shared with `usage`, and the size message is written once.
+  - 1,227 tests pass with Postgres; zips 22,758,591 and 46,457,682 bytes.
+- **Console work done by the human** (all 10 steps). Two snags, both fixed:
+  - `KB_ID` in `.env` held the KB's ARN (`Retrieve` takes it, the ingestion job calls do not); now the 10-character
+    ID.
+  - The `update-stage` line was refused because the stage still had the throttle of `GET /api/documents` (route
+    removed in 7b); `delete-route-settings` for that key, then the line ran.
+- **Claude's checks** (results in `runs/upload_setup.md`):
+  - Aurora migration done: `source`, `title`, `expires_at` added; 4 curated documents, 797 chunks.
+  - `_data_source_id` filter probe ($0.003): same 10 passages in the same order as unfiltered; the empty uploads
+    source gives 0, so the filter is applied.
+  - Free deployed checks: all 15 `limits` refusals right, page and redirect OK; S3 refused an 11 MB file sent with a
+    real presigned POST (`EntityTooLarge`, 10,485,760). That used 1 of the day's 5 uploads.
+  - `DEMO_ENABLED=false` on the upload routes not run (needs the human); covered by the handler tests.
+- **Paid checks, the human's yes** (test PDF `agentic-ai-foundations.pdf`, AWS Prescriptive Guidance, 37 pages, 59
+  passages; hidden from Git in `.git/info/exclude`; the human doubled both ask caps in the Lambda for the day):
+  - 49 curated questions through KB `Retrieve` with the filter ($0.049): 45 identical to step 8; 4 differ at ranks
+    5–10 only, and asked again with and without the filter ($0.008) the unfiltered lists vary too, so it is AWS's
+    run-to-run variation. First correct rank unchanged on all 49.
+  - The upload: ours ready in under 2 minutes, KB ready about 3.5 minutes later. The 3 questions on each pipeline
+    cite the right pages (8, 18), and the LM35 question on the upload is refused on both. Without `upload_id`, the
+    actor-model question is refused on both, so uploads stay out of the curated search. Spend about $0.08 in all.
+- **Problem:** with the real IDs now in `.env`, 3 tests read them (a KB search got the curated filter; the ingest
+  handler saw `kb_configured()` true). Fix: an autouse fixture in `tests/conftest.py` blanks
+  `KB_CURATED_DATA_SOURCE_ID`, `KB_UPLOAD_DATA_SOURCE_ID` and `UPLOAD_BUCKET` in every test. 1,227 pass.
+- **Explained in the chat:** what the Aurora migration is (three added columns, safe to re-run).
+- **Page tidied** (the human asked for a cleaner, more professional look), `web/index.html` only:
+  - the three steps keep their number and title only (step 2 is now "Search the datasheets");
+  - the upload is a paperclip button inside the question box (limits in its tooltip), and its progress a chip inside
+    the box;
+  - the datasheet list and the pipeline toggle are in one options button ("All datasheets · Custom pipeline") that
+    opens a small panel (closes on Escape, a click outside, or focus leaving it).
+  - Checked in headless Edge at 1280 and 500 px; 1,227 tests pass. Not uploaded to S3 yet.
+- **Step 9a walkthrough** written as a PDF at the human's request (not shown in the chat):
+  `walkthroughs/Step9a_Walkthrough.pdf`, 10 pages (flow, AWS resources, code file by file, isolation, decisions,
+  tests and review, results, snags, how to explain it, known limits). Built with ReportLab in a scratch venv, so the
+  project's requirements are unchanged.
+- Both zips are newer than every `.py` file, so the live Lambdas run the repo's code.
+- **Open:** upload the new page and invalidate; set both Lambda ask caps back to 50; the human's PR.
 
 ## 2026-10-24 — Session 23: step 8 finished and merged; refusal-detection fix; toggle renamed
 

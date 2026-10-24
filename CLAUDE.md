@@ -239,7 +239,37 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - "Response details" uses the same names;
     - the API values stay `ours` / `kb`;
     - on a phone the toggle gets its own row.
-- Next: step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Cycle 2 step 9a (PDF upload): BUILT on 2026-10-24 (single agent), waiting for the console work. Plan:
+  `C:\Users\muham\.claude\plans\alright-so-if-there-serene-papert.md`; console guide and doc checks in
+  `datasheet-rag/runs/upload_setup.md`. Code review done and recorded (1 of 2), 10 of 10 fixed; 1,227 tests pass.
+  - Limits (the human's choice): 10 MB, 100 pages, 300 chunks, 5 uploads a day (`UPLOAD_DAILY_LIMIT`, kind
+    `uploads`), kept 24 h. One upload is processed at a time (lock item `ingest_lock` in `USAGE_TABLE`).
+  - Flow:
+    - `POST /api/uploads` returns a presigned S3 POST to `incoming/<id>.pdf`;
+    - the S3 event starts `handler.ingest_handler` in the new function `datasheet-rag-ingest` (`build/ingest.zip`,
+      pdfplumber);
+    - `ingest.run_upload` parses, chunks (`fixed_400_prefix`), embeds at 40 a minute, then connects and stores;
+    - it then copies the PDF and its sidecar to `kb/` and starts the KB's `uploads` data source sync;
+    - `GET /api/uploads/{id}` gives the record (DynamoDB `upload#<id>`);
+    - `/api/ask` takes `upload_id`.
+  - Isolation:
+    - an upload is document `upload-<id>`, `documents.source = 'upload'`;
+    - searches and counts that name no document read only curated rows;
+    - KB searches of all datasheets filter on `_data_source_id` = `KB_CURATED_DATA_SOURCE_ID` (they refuse to run
+      without it once an uploads source is set);
+    - an upload's file name never reaches the prompt.
+  - Locally `rag.server` takes a PUT and ingests in a thread, our pipeline only (in-memory records).
+  - Console work done (2026-10-24); Aurora migrated; the `_data_source_id` filter works (probe: same 10 passages as
+    unfiltered, 0 on the empty uploads source); free deployed checks passed, S3 refuses 11 MB (`EntityTooLarge`).
+    `KB_ID` must be the 10-character ID, not the ARN (the ingestion job calls need it).
+  - Paid checks passed (2026-10-24, about $0.08): one upload (37 pages, 59 passages) ready on ours in under 2 minutes
+    and on the KB 3.5 minutes later; 3 questions on each cite the right pages and refuse what the upload lacks;
+    without `upload_id` the upload is not searched; the 49 KB `Retrieve` keep their step 8 first correct ranks.
+  - Page tidied on 2026-10-24 (steps without descriptions; paperclip upload and status chip inside the question box;
+    datasheet and pipeline behind one options button). Walkthrough written: `walkthroughs/Step9a_Walkthrough.pdf`.
+  - Open: both Lambda ask caps back to 50 (doubled for the test), the tidied page uploaded and invalidated, the
+    human's PR.
+- Next after 9a: 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).

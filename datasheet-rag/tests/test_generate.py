@@ -314,3 +314,9 @@ def test_generate_with_no_chunks_calls_nothing():
     assert fake.requests == []
     assert result["answer"] == config.NOT_CONTAINED and result["not_contained"] is True
     assert costlog.read_rows() == []
+
+
+def test_an_upload_passage_is_labelled_without_its_file_name():
+    # Step 9a: the file name is the visitor's own text, so it never reaches the prompt.
+    hit = {"document": "upload-0123456789abcdef", "page": 3, "page_label": "3"}
+    assert generate.passage_label(hit) == "Uploaded PDF (upload-0123456789abcdef), page 3"

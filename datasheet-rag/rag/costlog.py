@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from rag import config
 
 FIELDS = ["timestamp", "operation", "model_id", "unit", "quantity", "est_cost_usd"]
+# The operation of an upload's embedding batches (step 9a). Locally an upload is embedded in a background thread while
+# questions are answered, so `spent_since` leaves these rows out of a question's spend.
+UPLOAD_OPERATION = "embed_batch:upload/"
 
 
 def read_rows() -> list[dict]:
@@ -26,11 +29,13 @@ def row_count() -> int | None:
 
 def spent_since(logged_before: int | None) -> float | None:
     """Cost of the rows added since the log had `logged_before` rows; None when either count could not be read.
-    Rows another process writes meanwhile (an eval run in a second terminal) are counted too."""
+    Rows another process writes meanwhile (an eval run in a second terminal) are counted too, except an upload's
+    embedding (UPLOAD_OPERATION)."""
     if logged_before is None:
         return None
     try:
-        return sum((float(row["est_cost_usd"]) for row in read_rows()[logged_before:]), 0.0)
+        return sum((float(row["est_cost_usd"]) for row in read_rows()[logged_before:]
+                    if not row["operation"].startswith(UPLOAD_OPERATION)), 0.0)
     except (OSError, ValueError, TypeError, KeyError):
         return None
 

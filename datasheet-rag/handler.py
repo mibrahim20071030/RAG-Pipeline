@@ -1,8 +1,11 @@
 """The Lambda entry point (Cycle 2): the JSON API of `rag.api` behind API Gateway.
 
-Lambda handler setting: handler.lambda_handler
+Lambda handler settings: handler.lambda_handler (the API function), handler.ingest_handler (the ingest function,
+step 9a, started by S3 when an uploaded PDF lands under incoming/; it is the only one with pdfplumber in its zip)
 
-POST /api/ask        {"question": "...", "document": null | "<name>"} -> rag.api.ask
+POST /api/ask           {"question": "...", "document": null | "<name>", "upload_id": ...} -> rag.api.ask
+POST /api/uploads       {"filename": "...", "size": ...}  -> rag.api.start_upload (a presigned POST to S3)
+GET  /api/uploads/<id>                                     -> rag.api.upload_status
 
 Both API Gateway payload formats are read: HTTP API (version 2.0) and REST API (version 1.0); a stage name at the
 start of the path is ignored. CORS headers are API Gateway's job.
@@ -20,12 +23,16 @@ import contextlib
 import json
 import time
 import traceback
+from urllib.parse import unquote_plus
 
 import psycopg
 
-from rag import api, config, db
+from rag import api, config, db, kb, uploads
 
-ROUTES = {"/api/ask": "POST"}  # GET /api/documents was removed in step 7b: the page has the list written in
+# GET /api/documents was removed in step 7b: the page has the list written in. "/api/uploads/{id}" stands for
+# /api/uploads/<any id>.
+ROUTES = {"/api/ask": "POST", "/api/uploads": "POST", "/api/uploads/{id}": "GET"}
+UPLOAD_PATH = "/api/uploads/"
 
 
 def _request(event: dict) -> tuple[str, str, dict, str | bytes | None]:
@@ -93,13 +100,21 @@ def _open_conn(connect, log: dict):
             conn.close()
 
 
-def lambda_handler(event, context, connect=None, ask=None) -> dict:
-    """One API Gateway request. `connect` and `ask` replace the real ones in tests."""
+def _route(path: str) -> str:
+    if path.startswith(UPLOAD_PATH) and path.count("/") == 3 and len(path) > len(UPLOAD_PATH):
+        return "/api/uploads/{id}"
+    return path
+
+
+def lambda_handler(event, context, connect=None, ask=None, store=None, presign=None, kb_status=None) -> dict:
+    """One API Gateway request. `connect`, `ask`, the upload store, `presign` and `kb_status` replace the real ones in
+    tests."""
     connect, ask = connect or db.connect, ask or api.ask
     start = time.perf_counter()
     log = {}
     try:
-        response = _handle(event if isinstance(event, dict) else {}, connect, ask, log)
+        response = _handle(event if isinstance(event, dict) else {}, connect, ask, log,
+                           (store, presign or uploads.presign_post, kb_status or kb.ingestion_status))
     except Exception:  # noqa: BLE001 (any failure still gets an answer the page can show, and a log line)
         traceback.print_exc()
         response = _error(500, "The server hit an unexpected error. Its log has the details.")
@@ -109,27 +124,99 @@ def lambda_handler(event, context, connect=None, ask=None) -> dict:
     return response
 
 
-def _handle(event, connect, ask, log) -> dict:
+def _handle(event, connect, ask, log, upload_parts) -> dict:
     if not config.DEMO_ENABLED:
         return _response(503, {"error": api.DEMO_OFF, "off": True})
     try:
         method, path, headers, body = _request(event)
     except ValueError:
         return _error(400, "The request body is not valid base64.")
-    log.update({"method": method, "path": path})
-    if path not in ROUTES:
+    route = _route(path)
+    log.update({"method": method, "path": route})  # an upload id is not logged
+    if route not in ROUTES:
         return _error(404, "Not found.")
-    if method != ROUTES[path]:
-        return _error(405, f"Use {ROUTES[path]} for {path}.")
+    if method != ROUTES[route]:
+        return _error(405, f"Use {ROUTES[route]} for {route}.")
+
+    store, presign, kb_status = upload_parts
+    store = store or uploads.default_store()
+    if route == "/api/uploads/{id}":
+        status, data = api.upload_status(path.removeprefix(UPLOAD_PATH), store, kb_status)
+        return _response(status, data)
 
     payload, error = _payload(headers, body)
     if error:
         return error
+    if route == "/api/uploads":
+        status, data = api.start_upload(payload, store, presign, to_kb=uploads.kb_configured())
+        log["upload"] = status == 200
+        return _response(status, data)
 
     if isinstance(payload, dict):
         # Logged before the API checks it, so an unknown value is logged as such, never copied in.
         name = "ours" if payload.get("pipeline") is None else payload["pipeline"]  # as api.check_pipeline reads it
         log["pipeline"] = name if name in config.PIPELINES else "unknown"
-    status, data = ask(payload, lambda: _open_conn(connect, log))
+    status, data = ask(payload, lambda: _open_conn(connect, log), upload_store=store)
     log.update({key: data[key] for key in ("timings_ms", "spent_usd") if key in data})
     return _response(status, data)
+
+
+# ---------------------------------------------------------------- the ingest function (step 9a)
+
+def _incoming(record: dict) -> tuple[str, str, int] | None:
+    """(bucket, key, size) of an S3 "object created" record under UPLOAD_INCOMING, or None for anything else."""
+    s3 = record.get("s3") or {}
+    bucket = (s3.get("bucket") or {}).get("name")
+    obj = s3.get("object") or {}
+    key = unquote_plus(obj.get("key") or "")  # S3 event keys are URL-encoded
+    if not bucket or not key.startswith(config.UPLOAD_INCOMING):
+        return None
+    return bucket, key, int(obj.get("size") or 0)
+
+
+def ingest_handler(event, context, store=None, s3=None, connect=None, run=None) -> dict:
+    """S3 started this for each new file under incoming/: ingest it as the upload its name says, then delete it.
+
+    A file with no waiting record (unknown, expired, or a retry after the first try took it) is deleted unread.
+    S3's own size condition already held the file to UPLOAD_MAX_BYTES; it is checked again here."""
+    from rag import ingest  # pdfplumber is in this function's zip only
+
+    store, connect = store or uploads.default_store(), connect or db.connect
+    s3 = s3 or uploads._s3()
+    done = []
+    for record in (event or {}).get("Records", []):
+        found = _incoming(record)
+        if found is None:
+            continue
+        bucket, key, size = found
+        upload_id = key.removeprefix(config.UPLOAD_INCOMING).removesuffix(".pdf")
+        start = time.perf_counter()
+        log = {"ingest": True, "size": size}
+        try:
+            upload = store.get(upload_id) if uploads.valid_id(upload_id) else None
+            if upload is None or upload.get("status") != "waiting":
+                log["skipped"] = True
+            elif size > config.UPLOAD_MAX_BYTES:
+                store.update(upload_id, status="failed", ours="failed", kb="off",
+                             error=uploads.TOO_LARGE)
+                store.release_lock(upload_id)
+            else:
+                data = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                final = (run or ingest.run_upload)(store, upload_id, data, connect, to_kb=uploads.kb_configured())
+                log.update({key_: final.get(key_) for key_ in ("status", "ours", "kb", "pages", "chunks")})
+        except Exception:  # noqa: BLE001 (one bad file must not stop the others, and must still be deleted)
+            traceback.print_exc()
+            log["status"] = "error"
+            # Reading the file failed before run_upload took over: the record must not stay "waiting".
+            if uploads.valid_id(upload_id):
+                with contextlib.suppress(Exception):
+                    if (store.get(upload_id) or {}).get("status") == "waiting":
+                        store.update(upload_id, status="failed", ours="failed", kb="off", error=ingest.FAILED)
+                        store.release_lock(upload_id)
+        finally:
+            with contextlib.suppress(Exception):
+                s3.delete_object(Bucket=bucket, Key=key)
+        log["total_ms"] = round((time.perf_counter() - start) * 1000, 1)
+        print(json.dumps(log), flush=True)
+        done.append(log)
+    return {"processed": len(done)}

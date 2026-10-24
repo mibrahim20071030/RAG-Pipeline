@@ -23,6 +23,9 @@ from rag import config, costlog, generate, pipeline
 
 KB_MODEL = "bedrock-managed-kb"  # the model_id column of the cost log for Retrieve calls
 _client = None
+_agent_client = None
+# Statuses of an ingestion job (GetIngestionJob) after which it does not change any more.
+JOB_DONE, JOB_FAILED = ("COMPLETE",), ("FAILED", "STOPPED")
 
 
 def _bedrock():
@@ -36,13 +39,51 @@ def _bedrock():
     return _client
 
 
+def _agent():
+    """The build-time endpoint (bedrock-agent), where ingestion jobs are started and read."""
+    global _agent_client
+    if _agent_client is None:
+        _agent_client = boto3.client("bedrock-agent", region_name=config.AWS_REGION,
+                                     config=Config(retries={"max_attempts": config.BEDROCK_MAX_ATTEMPTS,
+                                                            "mode": "adaptive"},
+                                                   connect_timeout=config.BEDROCK_CONNECT_TIMEOUT_S,
+                                                   read_timeout=config.BEDROCK_READ_TIMEOUT_S))
+    return _agent_client
+
+
 def search_config(document: str | None, k: int) -> dict:
-    """The retrievalConfiguration of a Managed KB: k results after AWS's own reranker, one datasheet or all."""
+    """The retrievalConfiguration of a Managed KB: k results after AWS's own reranker, one datasheet or all.
+
+    `document` is a datasheet or an upload (upload-<id>), the name our .metadata.json sidecar put on every chunk of
+    that PDF. With none, the search is kept to the curated data source (step 9a), so no visitor's upload is in it."""
     managed = {"numberOfResults": k, "rerankingModelType": "MANAGED"}
     if document is not None:
-        # `document` is the datasheet name our .metadata.json sidecar put on every chunk of that PDF.
         managed["filter"] = {"equals": {"key": config.KB_DOCUMENT_KEY, "value": document}}
+    elif config.KB_UPLOAD_DATA_SOURCE_ID and not config.KB_CURATED_DATA_SOURCE_ID:
+        # With an uploads data source, the curated filter is all that keeps visitors' PDFs out of this search.
+        raise RuntimeError("KB_CURATED_DATA_SOURCE_ID is not set, so a search of all datasheets would also read "
+                           "visitors' uploads. Set it to the datasheets data source's ID.")
+    elif config.KB_CURATED_DATA_SOURCE_ID:
+        managed["filter"] = {"equals": {"key": config.KB_DATA_SOURCE_KEY, "value": config.KB_CURATED_DATA_SOURCE_ID}}
     return {"managedSearchConfiguration": managed}
+
+
+def start_ingestion(upload_id: str, client=None) -> str:
+    """Start a sync of the uploads data source, which indexes the files added under its prefix (and drops the ones
+    deleted). Returns the job's id. Free apart from the KB's storage."""
+    response = (client or _agent()).start_ingestion_job(
+        knowledgeBaseId=config.KB_ID, dataSourceId=config.KB_UPLOAD_DATA_SOURCE_ID,
+        description=f"upload {upload_id}"[:200])
+    return response["ingestionJob"]["ingestionJobId"]
+
+
+def ingestion_status(job_id: str, client=None) -> tuple[str, int]:
+    """The job's status (STARTING, IN_PROGRESS, COMPLETE, FAILED, STOPPING, STOPPED) and its count of failed
+    documents."""
+    job = (client or _agent()).get_ingestion_job(
+        knowledgeBaseId=config.KB_ID, dataSourceId=config.KB_UPLOAD_DATA_SOURCE_ID, ingestionJobId=job_id,
+    )["ingestionJob"]
+    return job.get("status", ""), int((job.get("statistics") or {}).get("numberOfDocumentsFailed") or 0)
 
 
 def _source_document(uri: str | None) -> str | None:

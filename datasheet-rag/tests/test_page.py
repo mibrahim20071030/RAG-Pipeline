@@ -64,3 +64,17 @@ def test_the_page_knows_the_fixed_refusal_sentence():
     # The page shows a refusal in the model's own words under its notice, and needs the fixed sentence to tell them
     # apart.
     assert f'const NOT_CONTAINED = "{config.NOT_CONTAINED}";' in page_text()
+
+
+
+def test_the_page_offers_an_upload_within_the_configured_size():
+    text = page_text()
+    assert 'id="upload-file"' in text and 'accept="application/pdf,.pdf"' in text
+    assert f"const MAX_BYTES = {config.UPLOAD_MAX_BYTES // (1024 * 1024)} * 1024 * 1024;" in text
+    assert f"up to {config.UPLOAD_MAX_BYTES // (1024 * 1024)} MB and {config.UPLOAD_MAX_PAGES} pages" in text
+    assert f"Kept for {config.UPLOAD_KEEP_HOURS} hours" in text
+
+
+def test_the_page_knows_the_upload_document_prefix():
+    # "Open page" finds the visitor's own copy from the source's document name.
+    assert f'.slice("{config.UPLOAD_PREFIX}".length)' in page_text()
