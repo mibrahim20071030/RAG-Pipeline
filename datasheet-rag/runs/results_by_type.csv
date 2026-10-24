@@ -159,3 +159,7 @@ gen_prefix_k10,True,single_value,10,1.0,0.95
 gen_prefix_k10,True,table_lookup,22,1.0,0.8446969696969697
 gen_prefix_k10,True,rephrased,6,0.8333333333333334,0.7685185185185185
 gen_prefix_k10,True,comparison,5,1.0,0.9
+kb_managed,True,single_value,10,1.0,1.0
+kb_managed,True,table_lookup,22,0.8636363636363636,0.7918470418470418
+kb_managed,True,rephrased,6,0.8333333333333334,0.75
+kb_managed,True,comparison,5,0.6,0.49166666666666664

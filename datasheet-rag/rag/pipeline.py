@@ -62,6 +62,12 @@ def warnings(result: dict) -> list[str]:
         # Not the same as a question the datasheets cannot answer: nothing was searched or nothing is stored.
         found.append(f"The search found no chunks. The question has no searchable word, or strategy "
                      f"{config.DEFAULT_STRATEGY!r} is not loaded (check with: python scripts\\show_db.py).")
+    return found + answer_warnings(result)
+
+
+def answer_warnings(result: dict) -> list[str]:
+    """The warnings about the answer itself, the same for both pipelines: invalid labels and a cut-off."""
+    found = []
     if result["invalid"]:
         found.append(f"The answer cites passages that do not exist: {result['invalid']}")
     if result["cut_off"]:
@@ -69,15 +75,16 @@ def warnings(result: dict) -> list[str]:
     return found
 
 
-def format_answer(result: dict) -> str:
-    """The answer for a reader: the text, then each cited source as datasheet and PDF page, then any warning."""
+def format_answer(result: dict, warnings_fn=None) -> str:
+    """The answer for a reader: the text, then each cited source as datasheet and PDF page, then any warning
+    (`warnings_fn`, default `warnings`; the KB pipeline passes its own)."""
     lines = [result["answer"].strip(), ""]
     if result["sources"]:
         lines.append("Sources:")
         lines += [f"  [{source['label']}] {generate.passage_label(source)}" for source in result["sources"]]
     else:
         lines.append("Sources: none")
-    lines += [f"WARNING: {warning}" for warning in warnings(result)]
+    lines += [f"WARNING: {warning}" for warning in (warnings_fn or warnings)(result)]
     return "\n".join(lines)
 
 

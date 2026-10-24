@@ -4,6 +4,7 @@ Run from datasheet-rag, with SITE_URL (CloudFront) and API_URL (API Gateway) in 
     python -m rag.eval.deployed_eval plan --pass first          free, wakes Aurora: calls, cost, minutes, daily count
     python -m rag.eval.deployed_eval run --pass first           paid: prints the plan, asks, then asks 49 questions
     python -m rag.eval.deployed_eval run --pass cached --yes    the same questions again, rerank scores now cached
+    python -m rag.eval.deployed_eval run --pass kb              paid: the questions on the Knowledge Base pipeline
     python -m rag.eval.deployed_eval cold --trials 3 --yes      waits idle before each trial, then asks q01
     python -m rag.eval.deployed_eval logs                       free: Lambda's CloudWatch lines joined to the rows
     python -m rag.eval.deployed_eval summary --aurora-acu-hours 0.5
@@ -12,9 +13,13 @@ Questions go out DEPLOYED_PACE_S apart, as a visitor's would, so the reranker's 
 answer is appended to runs/deployed/<pass>.csv as it arrives, and a re-run skips the questions already answered. The
 paid calls happen in the Lambda function, whose cost log is in its /tmp: the spend comes from each answer's
 `spent_usd` and is checked against the `{"cost": ...}` lines in CloudWatch.
+
+The `kb` pass (Cycle 2 step 8) sends `"pipeline": "kb"`: no Aurora, so its plan reads nothing from it either. Its
+Retrieve time is stored as search_ms, and its answers are compared with the local KB run (kb_managed).
 """
 import argparse
 import csv
+import functools
 import http.client
 import json
 import os
@@ -30,7 +35,9 @@ from rag import config, db, rerank, search, usage
 from rag.eval import metrics, questions
 from rag.eval.run_eval import _embed_usd, _median, _read_csv
 
-PASSES = ("first", "cached")
+PASSES = ("first", "cached", "kb")
+KB_PASS = "kb"
+KB_LOCAL_REFERENCE = "kb_managed"  # the local run of the KB pipeline (rag.eval.kb_eval)
 BASES = {"site": "SITE_URL", "api": "API_URL"}
 COLD_QUESTION = "q01"  # cached since step 4, so a cold trial costs only the answer
 ROW_FIELDS = [
@@ -77,10 +84,11 @@ def _epoch_ms(iso: str) -> float:
     return datetime.fromisoformat(iso).timestamp() * 1000
 
 
-def send(url: str, question: str, opener=urllib.request.urlopen, clock=time.perf_counter) -> dict:
+def send(url: str, question: str, opener=urllib.request.urlopen, clock=time.perf_counter,
+         pipeline: str = "ours") -> dict:
     """One POST /api/ask: status (0 when nothing came back), lower-case headers, parsed body (None when it is not
     JSON), body text and client ms. Never raises for an HTTP or network error."""
-    body = json.dumps({"question": question, "document": None}).encode()
+    body = json.dumps({"question": question, "document": None, "pipeline": pipeline}).encode()
     request = urllib.request.Request(url + "/api/ask", data=body, method="POST",
                                      headers={"content-type": "application/json"})
     start = clock()
@@ -151,7 +159,9 @@ def result_row(question: dict, pass_: str, response: dict) -> dict:
         # The API reports invalid labels only as a warning (pipeline.warnings).
         "invalid": any("do not exist" in warning for warning in warnings) if ok else None,
         "warnings": " | ".join(warnings),
-        "search_ms": timings.get("search"), "rerank_ms": timings.get("rerank"), "generate_ms": timings.get("generate"),
+        # The KB pipeline has one Retrieve step where ours has search and rerank.
+        "search_ms": timings.get("search", timings.get("retrieve")), "rerank_ms": timings.get("rerank"),
+        "generate_ms": timings.get("generate"),
         "spent_usd": body.get("spent_usd"),
         "x_cache": response["headers"].get("x-cache"), "cf_pop": response["headers"].get("x-amz-cf-pop"),
         "error": None if ok else (body.get("error") or body.get("message") or response["text"][:200]),
@@ -189,6 +199,8 @@ def run_pass(url: str, questions_: list[dict], pass_: str, path: Path | None = N
     todo = [question for question in questions_ if question["id"] not in done]
     if len(todo) < len(questions_):
         print(f"{len(questions_) - len(todo)} already answered in {path.name}, {len(todo)} to ask.")
+    if pass_ == KB_PASS:
+        sender = functools.partial(sender, pipeline="kb")
     last = None
     for number, question in enumerate(todo, start=1):
         if last is not None:
@@ -229,16 +241,16 @@ def _no_paid_call(text: str):
     raise RuntimeError("the plan must not embed; only cached question vectors are used")
 
 
-def _local_tokens() -> tuple[float, float]:
-    """Mean input and output tokens per answer in the local run of the frozen setup, for the answer cost."""
-    rows = _read_csv(config.EVAL_DIR / f"{config.DEPLOYED_LOCAL_REFERENCE}.csv")
+def _local_tokens(reference: str | None = None) -> tuple[float, float]:
+    """Mean input and output tokens per answer in a local run (default the frozen setup's), for the answer cost."""
+    rows = _read_csv(config.EVAL_DIR / f"{reference or config.DEPLOYED_LOCAL_REFERENCE}.csv")
     inputs = [float(row["input_tokens"]) for row in rows if row.get("input_tokens")]
     outputs = [float(row["output_tokens"]) for row in rows if row.get("output_tokens")]
     return (sum(inputs) / len(inputs) if inputs else 5000.0), (sum(outputs) / len(outputs) if outputs else 100.0)
 
 
-def answer_usd(answers: int) -> float:
-    input_tokens, output_tokens = _local_tokens()
+def answer_usd(answers: int, reference: str | None = None) -> float:
+    input_tokens, output_tokens = _local_tokens(reference)
     return answers * (input_tokens / 1000 * config.GENERATE_USD_PER_1K_INPUT
                       + output_tokens / 1000 * config.GENERATE_USD_PER_1K_OUTPUT)
 
@@ -261,6 +273,26 @@ def plan_pass(conn, questions_: list[dict]) -> dict:
             "generate_calls": len(texts), "cost": cost, "total": sum(cost.values()),
             "minutes": len(texts) * config.DEPLOYED_PACE_S / 60, "daily_asks": used,
             "daily_left": config.DEPLOYED_DAILY_LIMIT - used}
+
+
+def plan_kb_pass(questions_: list[dict]) -> dict:
+    """What the KB pass would pay for: one Retrieve and one answer per question. Reads nothing from Aurora."""
+    used = usage.count("kb_asks")
+    cost = {"retrieve": len(questions_) * config.KB_USD_PER_RETRIEVE,
+            "generate": answer_usd(len(questions_), KB_LOCAL_REFERENCE)}
+    return {"questions": len(questions_), "retrieve_calls": len(questions_), "generate_calls": len(questions_),
+            "cost": cost, "total": sum(cost.values()), "minutes": len(questions_) * config.DEPLOYED_PACE_S / 60,
+            "daily_asks": used, "daily_left": config.DEPLOYED_KB_DAILY_LIMIT - used}
+
+
+def print_kb_plan(plan: dict) -> None:
+    cost = plan["cost"]
+    print(f"Questions:              {plan['questions']:>4}")
+    print(f"Retrieve calls (KB):    {plan['retrieve_calls']:>4}  ${cost['retrieve']:.4f}")
+    print(f"Answers (Nova Lite):    {plan['generate_calls']:>4}  ${cost['generate']:.4f}  (local mean tokens)")
+    print(f"Estimated cost:         ${plan['total']:.4f}")
+    print(f"Estimated time:         {plan['minutes']:.0f} minutes ({config.DEPLOYED_PACE_S} s apart)")
+    print(f"KB daily cap used:      {plan['daily_asks']} of {config.DEPLOYED_KB_DAILY_LIMIT}")
 
 
 def print_plan(plan: dict) -> None:
@@ -329,7 +361,8 @@ def group_invocations(events: list[dict]) -> list[dict]:
 
 
 def _same_timings(row: dict, handler: dict) -> bool:
-    logged = handler.get("timings_ms") or {}
+    logged = dict(handler.get("timings_ms") or {})
+    logged.setdefault("search", logged.get("retrieve"))  # a KB answer's Retrieve is stored as search_ms
     for key in ("search", "rerank", "generate"):
         ours, theirs = row.get(f"{key}_ms"), logged.get(key)
         if ours in (None, "") and theirs is None:
@@ -501,13 +534,17 @@ def local_row(questions_: list[dict]) -> dict:
 def summarise(questions_: list[dict], aurora_acu_hours: float | None) -> list[dict]:
     truths_by_id = {question["id"]: question["sources"] for question in questions_}
     local_by_id = {row["id"]: row for row in _read_csv(config.EVAL_DIR / f"{config.DEPLOYED_LOCAL_REFERENCE}.csv")}
+    local_kb = {row["id"]: row for row in _read_csv(config.EVAL_DIR / f"{KB_LOCAL_REFERENCE}.csv")}
     # Every cold trial asks the same question, so each of its rows counts; a pass keeps the last row per question.
     by_pass = {pass_: latest_rows(pass_path(pass_)) for pass_ in PASSES}
     by_pass["cold"] = _read_csv(pass_path("cold"))
-    total = sum(len(rows) for rows in by_pass.values())
+    total = sum(len(rows) for pass_, rows in by_pass.items() if pass_ != KB_PASS)
     aurora = (aurora_acu_hours * config.AURORA_USD_PER_ACU_HOUR / total
               if aurora_acu_hours is not None and total else None)
-    summary = [summary_row(pass_, rows, truths_by_id, local_by_id, aurora) for pass_, rows in by_pass.items() if rows]
+    # The KB pass never touches Aurora, so it carries no Aurora share, and it is compared with the local KB run.
+    summary = [summary_row(pass_, rows, truths_by_id, local_kb if pass_ == KB_PASS else local_by_id,
+                           None if pass_ == KB_PASS else aurora)
+               for pass_, rows in by_pass.items() if rows]
     return [local_row(questions_), *summary]
 
 
@@ -550,9 +587,13 @@ def main(argv: list[str]) -> None:
     if args.command in ("plan", "run"):
         done = set() if args.command == "plan" else done_ids(pass_path(args.pass_))
         todo = [q for q in questions_ if q["id"] not in done]
-        with db.connect(target="aurora") as conn:
-            plan_ = plan_pass(conn, todo)
-        print_plan(plan_)
+        if args.pass_ == KB_PASS:
+            plan_ = plan_kb_pass(todo)
+            print_kb_plan(plan_)
+        else:
+            with db.connect(target="aurora") as conn:
+                plan_ = plan_pass(conn, todo)
+            print_plan(plan_)
         if args.command == "plan":
             print("\nNothing was called.")
             return

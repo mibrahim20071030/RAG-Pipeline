@@ -151,7 +151,57 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     from `rag/db.py`; the table stays on Aurora, unused.
   - Cap 50 a day (`DEPLOYED_DAILY_LIMIT`). A full deployed eval (98 asks) needs it raised for that day.
   - DynamoDB on-demand checked on 2026-10-23: $0.625 per million writes, $0.125 per million reads; TTL deletes free.
-- Next: step 8 (the full Knowledge Base pipeline behind the same page, then both pipelines tested), then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Cycle 2 step 8 (Managed Knowledge Base): BUILT on 2026-10-23 (single agent), deployed; the deployed KB pass,
+  the code review and the PR are still to come.
+  - Plan: `C:\Users\muham\.claude\plans\plan-to-build-step-fluttering-quilt.md`. Setup in
+    `datasheet-rag/runs/kb_setup.md`, results in `datasheet-rag/runs/kb_compare.md`.
+  - The KB: Managed KB `datasheet-rag-kb`, data source `datasheets` on S3 bucket `datasheet-rag-kb-...` (the 4 PDFs
+    under `kb/`, each with a `.metadata.json` sidecar giving `document` and `part`, written by
+    `scripts/kb_prepare.py`).
+    - Managed embedder, parser, default chunking; media indexing and the deletion safeguard off.
+    - Sync took about 4 minutes.
+    - `KB_ID` is in `.env` and in the Lambda.
+    - The ARN is not shown in the AgentCore console; use CloudShell `aws bedrock-agent get-knowledge-base`.
+    - Inline policy `rag-kb-query` (`bedrock:Retrieve` on the KB) on the dev user and on the Lambda role.
+  - Verified on 2026-10-23 (docs and probe):
+    - Managed KB prices: $5 per GB of raw data a month; `Retrieve` $1 per 1,000; managed embedding, parsing and
+      reranking $0.
+    - 600 `Retrieve` a minute.
+    - Query with `managedSearchConfiguration` (`numberOfResults`, `rerankingModelType` `MANAGED`, `filter`
+      `equals`).
+    - Results carry `content.text`, `score`, `_source_uri` (https), `_chunk_id`, `_excerpt_page_number` (a float,
+      the 1-based PDF page as our `page`) and our sidecar keys. Table chunks add `_table_id` and
+      `_table_section_title`.
+    - 7 of 490 ESP32 passages had no page (not explained).
+  - Code:
+    - `rag/kb.py` (`retrieve`, `to_hit`, `answer_question`, `warnings`, CLI `python -m rag.kb "..."`).
+    - `api.ask(..., kb_answer_fn=None)` with `check_pipeline`: the KB path never calls `open_conn`, counts as
+      `kb_asks` (`KB_DAILY_ASK_LIMIT`, Lambda 50), and builds links from `config.DOCUMENTS`. `setup.pipeline` is in
+      every 200.
+    - The handler logs `pipeline`.
+    - Page toggle (`#pipeline`, `?p=kb`); the total time sums every timing.
+    - `pipeline.format_answer(result, warnings_fn=None)`.
+    - `rag/eval/kb_eval.py` (rows and summary in run_eval's columns, experiment `kb_managed`),
+      `scripts/compare_pipelines.py`.
+    - `deployed_eval` `--pass kb` (no Aurora in its plan; retrieve stored as `search_ms`).
+    - `call_api.py ask --pipeline kb`.
+    - Settings: `PIPELINES`, `KB_ID`, `KB_PAGE_KEY`, `KB_DOCUMENT_KEY`, `KB_USD_PER_RETRIEVE`, `KB_USD_PER_GB_MONTH`,
+      `KB_DIR`, `KB_DAILY_ASK_LIMIT`, `DEPLOYED_KB_DAILY_LIMIT`.
+  - Local results (49 questions):
+    - KB: R@5 0.860, MRR 0.800, citation hit 0.837, unanswerable refused 6/6, $0.0012 a question.
+    - Ours: R@5 0.977, MRR 0.865, citation hit 0.930, unanswerable refused 5/6, $0.0023 a question.
+    - The KB loses on table lookups and comparisons.
+  - Deployed checks passed (2026-10-23): unknown `pipeline` 400; a KB ask 200 in 2.5 s with no `connect_ms`.
+  - Deployed KB pass: 48 of 49, then the KB cap stopped q49. q49 was asked later (cap raised to 53 by the human),
+    so 49/49.
+    - KB: citation hit 0.837, client p50 1,656 ms, no Aurora connect in any row.
+    - Ours (step 7): 0.930, p50 1,088 ms.
+    - About $0.0012 a question for the KB, against $0.0041 for ours with Aurora.
+    - q21's first answer was lost between CloudFront and the client and was resent.
+  - Code review done and recorded (1 of 2); 8 of 10 fixed, 848 tests pass. The fixed zip (22,748,347 bytes) is
+    live (uploaded and checked 2026-10-24). The Lambda's `KB_DAILY_ASK_LIMIT` is 53 until set back to 50.
+  - Step 8 spend: $0.12.
+- Next: the human opens the step 8 PR. Then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
@@ -372,7 +422,7 @@ Rules for the agents (also written into each definition):
 | recall@k definition | Hit rate: for each question, 1 if at least one correct chunk is in the top k, else 0, averaged over questions. A question may list several acceptable (doc, page) pairs. | Defined once, used everywhere. MRR is reported alongside. |
 | Candidates and k | Hybrid search returns N = 30. Reranker keeps k = 10 (frozen at Layer 8; k 5 was the start value). | k 10 cut false refusals from 6 to 2 (Layer 7). |
 | Frontend | One static HTML page with `fetch` (`datasheet-rag/web/index.html`), served by `rag/server.py` locally in Cycle 1 and from S3 in Cycle 2 | No framework or build step. Built in Layer 8b. |
-| Managed comparison | A second pipeline on Bedrock Knowledge Bases with S3 Vectors, built in full after the deployed evaluation, served from the same page through a toggle (Ours / Knowledge Base), and judged with the same questions and metrics (Cycle 2 step 8). | Shows whether the managed service is worth the control it takes away (hybrid search, table chunking). Decided by the human on 2026-10-16; full pipeline and toggle on 2026-10-23. |
+| Managed comparison | A second pipeline on a Bedrock Managed Knowledge Base (AWS's parser, chunking, embedder, hybrid search and reranker; `Retrieve` feeds our `generate()`), served from the same page through a toggle (Ours / Knowledge Base), and judged with the same questions and metrics (Cycle 2 step 8). | Answers "build your own RAG pipeline or let AWS handle it", with the answer step identical. Decided by the human on 2026-10-16; full pipeline and toggle on 2026-10-23; Managed KB instead of S3 Vectors on 2026-10-23. |
 | PDF upload | A user uploads a PDF, which is ingested in the background and can then be asked about; on both pipelines, after the step 8 comparison (Cycle 2 step 9a). | Added by the human on 2026-10-23. Built after the comparison so it cannot skew it. |
 | Feedback loop | Human-approved corrections, after the step 8 comparison is final and after upload: on both pipelines (step 9b). | Corrections added before or during the comparison would skew it. Decided by the human on 2026-10-22; order and scope changed on 2026-10-23. |
 | Public demo | Throttled API Gateway plus Lambda concurrency cap. Torn down after publishing. A recorded demo and the repo stay as the portfolio artifact. | A public URL is the main spending risk. |
@@ -613,11 +663,12 @@ Order of work, each with a test written when the step starts:
    4. Lower `API_DAILY_ASK_LIMIT` (for example 50), which bounds Aurora's awake time to about cap x 5 minutes a day.
    5. An off switch: a Lambda variable such as `DEMO_ENABLED=false` that answers 503 before anything else, or the console's Throttle (concurrency 0; VERIFY it is allowed with the account's quota of 10).
    Fixes 1, 3 and 5 live in the Lambda, so they hold for requests that come in on the `execute-api` address and skip CloudFront. The human creates the DynamoDB table and the Lambda role's permission in the console.
-8. **Knowledge Base pipeline, built in full, then both tested (added 2026-10-16, widened 2026-10-23).** Build a second RAG pipeline with Amazon Bedrock Knowledge Bases, using an S3 Vectors vector store, start to finish and identical to our hosted one from the user's side: the same `web/index.html` with a toggle (Ours / Knowledge Base), the same `POST /api/ask` with a `pipeline` field, the same limits, and a `rag/kb.py` whose result has the same shape as `pipeline.answer_question` (KB citations mapped to our `[n]` + document + page; the KB path must not touch Aurora). Then test both pipelines on the 49 questions and save the results. It gets its own plan in plan mode; split it into smaller steps there if needed. What is known so far:
-   - Fair comparison: same 4 PDFs, same 49 frozen questions, and the same models where the KB allows them (Titan V2 1024, Cohere Rerank 3.5, Nova Lite) (VERIFY that the KB accepts each one). Change one thing at a time.
-   - Two levels: retrieval only (KB `Retrieve` against our hybrid search plus reranker: recall@k, MRR) and end to end (KB `RetrieveAndGenerate` against `answer_question`: citation hit rate, refusals, and RAGAS on the best setup if the budget allows). Map KB results to `(document, page)` hits so `rag/eval/metrics.py` is reused unchanged. The page number for a PDF chunk is expected in the result metadata (VERIFY the field name).
-   - Expected differences to test, not assume: S3 Vectors is believed to support vector search only, with KB hybrid search needing another store such as OpenSearch Serverless or Aurora (VERIFY); our custom table chunking against the KB parsers (default, foundation model parser, Bedrock Data Automation; VERIFY options and prices); KB chunking options (fixed, hierarchical, semantic, none); build effort, latency and cost per question.
-   - Friction: the dev IAM user can only call Bedrock, so the human creates the S3 bucket, the S3 vector bucket and index, and the KB service role in the console. Ingestion runs through the Titan quota (60 a minute), and a reranked KB run of 49 questions takes about 17 minutes (Rerank 3 a minute), with no help from our rerank cache. Check S3 Vectors and KB prices before any paid run, and print calls and cost first as usual.
+8. **Knowledge Base pipeline, built in full, then both tested (added 2026-10-16, widened 2026-10-23; plan approved 2026-10-23, see Current status).** A **Bedrock Managed KB** (the human's choice on 2026-10-23, replacing the S3 Vectors plan, because it answers "build your own or let AWS handle it"):
+   - AWS's managed parser, default chunking, managed embedder, hybrid search and managed reranker.
+   - `Retrieve` gives the top 10, and our `generate()` writes the answer, so the answer step is identical and the comparison measures retrieval. The Managed KB has no `RetrieveAndGenerate`.
+   - Same page with a toggle, the same `POST /api/ask` with a `pipeline` field, the same limits; the KB path never touches Aurora.
+   - Sub-steps: 8a ingest and page-number probe, 8b code, 8c local eval, 8d deploy and deployed KB pass. Results in `datasheet-rag/runs/kb_compare.md`, setup in `datasheet-rag/runs/kb_setup.md`.
+   - Left for after the results: RAGAS on the KB answers; a second KB with fixed-size chunking.
 9. **Upload, then feedback, on both pipelines, then both tested again (reordered 2026-10-23).** Starts only after step 8's results are final and recorded, so they stay unskewed. Each part has its own plan in plan mode.
    - **9a PDF upload (added 2026-10-23).** One `rag/ingest.py` `ingest_pdf(conn, pdf_bytes, filename)` reusing parse, `chunk_document(..., "fixed_400_prefix")` and the load path. Ingestion runs in the background (Titan at 60 a minute makes a datasheet take minutes, past API Gateway's 30 s), so `POST /api/uploads` returns an `upload_id` and `GET /api/uploads/{id}` gives the status. Deployed: a presigned S3 PUT, an S3 event starts an ingest Lambda, paced below the Titan quota so visitors' questions still get through. Uploads are private (reachable only by `upload_id`), kept out of the default curated search so the 49-question results do not change (`documents.source`, `expires_at`), deleted after a TTL, and capped (file size, pages, chunks, daily uploads counted outside Aurora). "Open page" uses the browser's own copy of the file. KB side, to VERIFY in the plan: S3 plus metadata sidecar plus ingestion job with a metadata filter, or `RetrieveAndGenerate` with an external source. Risks: untrusted PDFs (check the type, time and memory limits, reject scanned files), prompt injection in uploaded text, chunking rules tuned on these four datasheets.
    - **9b Feedback loop (added 2026-10-22),** on both pipelines. Design source: `feedback_driven_rag_aws_design.pdf` (repo root, gitignored), with the changes from the 2026-10-22 review:
@@ -635,7 +686,7 @@ Order of work, each with a test written when the step starts:
 - Delete the API Gateway API (`datasheet-rag-api`) and the Lambda function and its role (`datasheet-rag-lambda`). Remove the dev user's inline policy `rag-lambda-invoke`.
 - Disable, then delete, the CloudFront distribution `datasheet-rag-web` (before its bucket), and its origin access control. Cancel the Free flat-rate plan if it is listed separately.
 - Empty and delete the S3 bucket `datasheet-rag-web-...` (the page; no PDFs are in S3).
-- Delete the Knowledge Base and its data source, the S3 vector index and vector bucket, the KB source bucket, and the KB service role.
+- Delete the Managed Knowledge Base `datasheet-rag-kb` and its data source `datasheets` (AgentCore console), the KB source bucket `datasheet-rag-kb-...`, and the KB service role the console created. Remove the inline policy `rag-kb-query` from the dev user and from the Lambda role.
 - Delete the upload resources (step 9a): the upload bucket or prefix, the ingest Lambda and its role, the upload routes.
 - Delete the feedback loop's resources (step 9b): the DynamoDB table, the KB correction index or S3 prefix, the `/api/feedback` route, and their IAM permissions. The `corrections` table goes with the Aurora cluster.
 - Delete the DynamoDB table `datasheet-rag-usage` (step 7b) and the inline policies `rag-usage-table` (Lambda

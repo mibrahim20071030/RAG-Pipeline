@@ -3,7 +3,7 @@
 `rag.server` puts this behind a local HTTP server and `handler.py` behind Lambda; keeping HTTP out of here means both
 call `ask` unchanged. `documents` is for the local server only (the deployed page has the list written in).
 
-POST /api/ask   {"question": "...", "document": null | "<name>"}
+POST /api/ask   {"question": "...", "document": null | "<name>", "pipeline": "ours" (default) | "kb"}
   200 -> {question, answer, answer_parts: [{text, labels?}], not_contained,
           sources: [{label, document, part, page, page_label, title, pdf_url}], warnings, timings_ms, spent_usd, setup}
   4xx / 5xx -> {"error": "<what happened and what to do>"}
@@ -19,7 +19,7 @@ from urllib.parse import quote
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, costlog, db, generate, pipeline, usage
+from rag import config, costlog, db, generate, kb, pipeline, usage
 
 NO_DATABASE = "Cannot reach Postgres. Start Docker Desktop, then run: docker start rag-pg"
 # The same failures as seen by a visitor of the deployed page (config.DEPLOYED), with no local-machine hints.
@@ -82,7 +82,8 @@ def _source(source: dict, files: dict[str, str | None]) -> dict:
         "page_label": source.get("page_label"),
         "title": generate.passage_label(source),
         # #page=N opens most browser PDF viewers at that page; `page` is the PDF position, not the printed number.
-        "pdf_url": f"{url}#page={source['page']}" if url else None,
+        # A Knowledge Base passage may have no page: then the link opens the datasheet, not a made-up page.
+        "pdf_url": (f"{url}#page={source['page']}" if source["page"] is not None else url) if url else None,
     }
 
 
@@ -120,21 +121,37 @@ def check_ask(payload) -> tuple[str | None, str | None, tuple[int, dict] | None]
     return question, document, None
 
 
-def ask(payload, open_conn, answer_fn=None, counter=None) -> tuple[int, dict]:
+def check_pipeline(payload: dict) -> tuple[str | None, tuple[int, dict] | None]:
+    """Which pipeline answers: "ours" (the default) or "kb" (the Managed Knowledge Base), or the error to answer."""
+    name = payload.get("pipeline")
+    if name is None:
+        name = "ours"
+    if not isinstance(name, str) or name not in config.PIPELINES:
+        return None, _error(400, "Pick a pipeline: ours or kb.")
+    return name, None
+
+
+def ask(payload, open_conn, answer_fn=None, counter=None, kb_answer_fn=None) -> tuple[int, dict]:
     """Answer one question from the page. Never raises for a bad request, an AWS refusal or a lost database.
 
     `open_conn()` gives a context manager that yields a database connection. It is entered only after the request
-    passed every check and took a place under the daily cap, so nothing else wakes the database. `counter` is the
-    daily counter (default rag.usage); tests pass a fake."""
+    passed every check and took a place under the daily cap, so nothing else wakes the database, and never for the
+    Knowledge Base pipeline. `counter` is the daily counter (default rag.usage); tests pass fakes for it and for
+    the two answer functions."""
     question, document, error = check_ask(payload)
     if error:
         return error
-    capped = config.API_DAILY_ASK_LIMIT > 0
+    name, error = check_pipeline(payload)
+    if error:
+        return error
+    # Each pipeline has its own count and cap.
+    kind, limit = ("asks", config.API_DAILY_ASK_LIMIT) if name == "ours" else ("kb_asks", config.KB_DAILY_ASK_LIMIT)
+    capped = limit > 0
     day = usage.today()  # fixed once, so a place given back after midnight goes back to the day it was taken from
     if capped:
         counter = counter or usage
         try:
-            counted = counter.take("asks", config.API_DAILY_ASK_LIMIT, day=day)
+            counted = counter.take(kind, limit, day=day)
         except (ClientError, BotoCoreError, RuntimeError):
             # Without a counted place there is no answer: an unreachable or unset counter must not lift the cap.
             traceback.print_exc()
@@ -142,6 +159,16 @@ def ask(payload, open_conn, answer_fn=None, counter=None) -> tuple[int, dict]:
         if counted is None:
             # "limit" tells the page this lasts until tomorrow, unlike the throttling 429 ("wait a minute").
             return 429, {"error": DAILY_LIMIT, "limit": "daily"}
+
+    if name == "kb":
+        logged_before = costlog.row_count()
+        status, body = _answer_kb(question, document, kb_answer_fn)
+        # The place goes back only when the cost log shows nothing was paid for (KB_ID unset, Retrieve refused or
+        # throttled). An unreadable log keeps the place, so a failure never lifts the cap.
+        if capped and status != 200 and costlog.spent_since(logged_before) == 0:
+            with contextlib.suppress(ClientError, BotoCoreError):
+                counter.release(kind, day=day)
+        return status, body
 
     connected = False
     try:
@@ -154,7 +181,7 @@ def ask(payload, open_conn, answer_fn=None, counter=None) -> tuple[int, dict]:
     # stored, or AWS throttled a model. A database lost partway through an answer keeps it (Bedrock may have run).
     if capped and (not connected or status in (400, 429)):
         with contextlib.suppress(ClientError, BotoCoreError):
-            counter.release("asks", day=day)
+            counter.release(kind, day=day)
     return status, body
 
 
@@ -171,15 +198,38 @@ def _answer(conn, question: str, document: str | None, answer_fn) -> tuple[int, 
         # The reranker scored fewer documents than sent, or the answer model stopped for another reason.
         return _error(502, f"A step stopped without a usable answer: {error}")
 
-    return 200, {
+    setup = {"pipeline": "ours", "strategy": config.DEFAULT_STRATEGY, "search": config.SEARCH_MODE,
+             "candidates": config.N_CANDIDATES, "passages": config.TOP_K, "model": config.GENERATE_MODEL_ID}
+    return 200, _body(question, result, files, pipeline.warnings(result), setup, logged_before)
+
+
+def _answer_kb(question: str, document: str | None, kb_answer_fn) -> tuple[int, dict]:
+    """The Knowledge Base pipeline: no database. The PDFs are named after their datasheet, as kb_prepare uploads
+    them, so the source links are built from config.DOCUMENTS alone."""
+    logged_before = costlog.row_count()
+    try:
+        result = (kb_answer_fn or kb.answer_question)(question, document=document)
+    except (ClientError, BotoCoreError) as error:
+        return _bedrock_error(error)
+    except RuntimeError as error:
+        # KB_ID is not set, or the answer model stopped for another reason.
+        return _error(502, f"A step stopped without a usable answer: {error}")
+    files = {name: f"{name}.pdf" for name in config.DOCUMENTS}
+    setup = {"pipeline": "kb", "search": "Managed Knowledge Base (hybrid)", "reranker": "managed",
+             "passages": config.TOP_K, "model": config.GENERATE_MODEL_ID}
+    return 200, _body(question, result, files, kb.warnings(result), setup, logged_before)
+
+
+def _body(question: str, result: dict, files: dict, warnings: list[str], setup: dict, logged_before) -> dict:
+    """The 200 answer of either pipeline."""
+    return {
         "question": question,
         "answer": result["answer"],
         "answer_parts": answer_parts(result["answer"], result["passages"]),
         "not_contained": result["not_contained"],
         "sources": [_source(source, files) for source in result["sources"]],
-        "warnings": pipeline.warnings(result),
+        "warnings": warnings,
         "timings_ms": result["timings_ms"],
         "spent_usd": costlog.spent_since(logged_before),
-        "setup": {"strategy": config.DEFAULT_STRATEGY, "search": config.SEARCH_MODE, "candidates": config.N_CANDIDATES,
-                  "passages": config.TOP_K, "model": config.GENERATE_MODEL_ID},
+        "setup": setup,
     }

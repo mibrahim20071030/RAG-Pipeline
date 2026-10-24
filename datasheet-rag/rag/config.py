@@ -121,6 +121,19 @@ GENERATE_USD_PER_1K_OUTPUT = 0.00024
 # The model is told to reply with exactly this sentence when the passages do not hold the answer.
 NOT_CONTAINED = "The provided datasheets do not contain this information."
 
+# Knowledge Base pipeline (Cycle 2 step 8): a Bedrock Managed KB with AWS's own parser, chunking, embedder and
+# reranker finds the passages; our generate() writes the answer. Retrieve API and prices checked on 2026-10-23:
+# $1.00 per 1,000 Retrieve calls, $5.00 per GB of raw data a month; managed embedding and reranking cost nothing.
+PIPELINES = ("ours", "kb")
+KB_ID = os.environ.get("KB_ID", "")
+# Result metadata: AWS's page key (the 1-based PDF page position, as our `page`; the page the chunk starts on, checked
+# with the probe on 2026-10-23, runs/kb_setup.md) and the datasheet name from our .metadata.json sidecar.
+KB_PAGE_KEY = "_excerpt_page_number"
+KB_DOCUMENT_KEY = "document"
+KB_USD_PER_RETRIEVE = 0.001
+KB_USD_PER_GB_MONTH = 5.0
+KB_DIR = ROOT / "build" / "kb"  # what kb_prepare writes, for upload to the KB's S3 bucket
+
 # Evaluation (Layer 7). Questions are hand-checked against the PDFs; a source is (document, PDF page).
 QUESTIONS = ROOT / "data" / "questions.jsonl"
 # Frozen at Layer 8: SHA-256 of the question file with line endings as "\n" (Git on Windows checks it out with "\r\n").
@@ -158,6 +171,7 @@ DEPLOYED_TIMEOUT_S = 40  # client timeout; API Gateway gives up at 30 s
 # API_DAILY_ASK_LIMIT as set in the Lambda (locally it is 0, off); 300 until step 7b. A full deployed eval (first
 # and cached pass, 98 asks) needs more: raise both for that day, then set them back.
 DEPLOYED_DAILY_LIMIT = 50
+DEPLOYED_KB_DAILY_LIMIT = 50  # KB_DAILY_ASK_LIMIT as set in the Lambda (step 8)
 LAMBDA_FUNCTION = "datasheet-rag"
 LAMBDA_MEMORY_MB = 512
 # Prices for us-east-1, checked on the AWS pricing pages on 2026-10-18 (all inside the Free plan credits here):
@@ -177,6 +191,9 @@ API_MAX_BODY_BYTES = 10_000
 # Questions answered per UTC day before /api/ask says "try tomorrow" (Cycle 2 step 5). 0 is off; Lambda sets 50.
 # Counted in the DynamoDB table USAGE_TABLE (step 7b), so a request over the cap never wakes Aurora.
 API_DAILY_ASK_LIMIT = int(os.environ.get("API_DAILY_ASK_LIMIT") or "0")
+# Knowledge Base questions are counted apart (step 8), so a full deployed run of one pipeline leaves the other's open.
+# Deployed, a missing variable means the usual cap of 50, not off: forgetting it must not open paid calls to anyone.
+KB_DAILY_ASK_LIMIT = int(os.environ.get("KB_DAILY_ASK_LIMIT") or ("50" if DEPLOYED else "0"))
 USAGE_TABLE = os.environ.get("USAGE_TABLE", "")
 USAGE_KEEP_DAYS = 7  # a day's counter item carries an expiry this many days later, for DynamoDB's TTL
 # The off switch of the deployed demo (step 7b): DEMO_ENABLED=false in the Lambda answers 503 before anything else.

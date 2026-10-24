@@ -47,8 +47,9 @@ def _bedrock():
 def passage_label(hit: dict) -> str:
     """Which datasheet and PDF page a passage is from, with the printed page number when it differs."""
     part = config.DOCUMENTS.get(hit["document"], {}).get("part")
-    label = f"{part} ({hit['document']})" if part else hit["document"]
-    label += f", page {hit['page']}"
+    document = hit["document"] or "unknown datasheet"  # a Knowledge Base passage may come back without one
+    label = f"{part} ({document})" if part else document
+    label += f", page {hit['page'] if hit['page'] is not None else 'unknown'}"
     if hit.get("page_label") and str(hit["page_label"]) != str(hit["page"]):
         label += f", printed page {hit['page_label']}"
     return label

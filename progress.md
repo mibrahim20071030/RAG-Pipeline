@@ -45,7 +45,13 @@ Next session (Cycle 2):
   variables, `GET /api/documents` deleted, `USAGE_TABLE` in `.env`, page uploaded and invalidated).
 - [x] 2026-10-23: Claude's deployed checks for step 7b passed (6 of 6).
 - [x] 2026-10-23: step 7b PR merged (#19, `23161dc`).
-- [ ] Say when to start step 8 (KB pipeline) in plan mode.
+- [x] 2026-10-23: step 8 plan approved (Managed KB, managed embedder and reranker, default chunking; our `generate()` answers).
+- [x] 2026-10-23: step 8a console work done (bucket, Managed KB, Sync, `rag-kb-query`, `KB_ID` in `.env`).
+- [x] 2026-10-23: local KB eval approved and run ($0.0588).
+- [x] 2026-10-23: step 8d console work done; deployed KB pass approved and run (48 of 49, $0.058).
+- [x] 2026-10-24: rebuilt zip uploaded (Claude checked it is live); `KB_DAILY_ASK_LIMIT` raised to 53; q49 asked.
+- [ ] Optional: set `KB_DAILY_ASK_LIMIT` back to 50 in the Lambda.
+- [ ] Step 8 PR (Claude lists the files).
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
 - [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
@@ -151,6 +157,103 @@ Cycle 2 (deploy, UI, report):
 - [ ] 9c. Both pipelines tested again.
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-23 — Session 22: step 8 planned (Managed Knowledge Base), 8a scripts written
+
+- Nothing on AWS was touched; no paid call.
+- The human asked what a Knowledge Base is, what `Retrieve` and `RetrieveAndGenerate` return, and how a system
+  passes retrieved chunks to a model. Explained in the chat.
+- Facts checked in the AWS docs on 2026-10-23:
+  - Custom KBs on S3 Vectors are vector-only (no hybrid).
+  - A new **Bedrock Managed KB** type exists:
+    - always hybrid; AWS's own embedder and reranker, which cost nothing;
+    - `Retrieve` only, with `managedSearchConfiguration`; no `RetrieveAndGenerate`;
+    - $5 per GB of raw data a month, $1 per 1,000 `Retrieve` calls;
+    - 600 `Retrieve` a minute;
+    - `.metadata.json` sidecars on the S3 source;
+    - available in us-east-1; Bedrock and AgentCore are on the Free plan list.
+  - Automatic page numbers are documented only for OpenSearch Serverless and Aurora, not for the Managed KB.
+  - boto3 1.43.111 already has `managedSearchConfiguration`.
+- Decisions (the human):
+  - **Option 2, the Managed KB**, because it answers "build your own or let AWS handle it".
+  - AWS's managed embedder and reranker, default chunking and managed parser.
+  - The KB's `Retrieve` feeds our `generate()`, so the answer step is identical and the test isolates retrieval.
+- Plan approved (`C:\Users\muham\.claude\plans\plan-to-build-step-fluttering-quilt.md`): 8a ingest and page-number
+  probe, 8b code (`rag/kb.py`, `pipeline` field in `api.ask`, toggle), 8c local eval, 8d deploy and deployed eval.
+- Built so far:
+  - `KB_*` settings and `PIPELINES` in `rag/config.py`;
+  - `scripts/kb_prepare.py` (sidecars; `--split` for one PDF per page, needs `pypdf`);
+  - `scripts/kb_probe.py` (one `Retrieve`, prints the metadata);
+  - the console guide `datasheet-rag/runs/kb_setup.md`.
+- 8a done:
+  - The human made the bucket, the Managed KB (managed embedder, parser and default chunking, media indexing off,
+    deletion safeguard off) and `rag-kb-query`, and put `KB_ID` in `.env`.
+  - Sync: about 4 minutes, 4 of 4 PDFs and 4 metadata files.
+  - The KB ARN is not shown in the AgentCore console; CloudShell `aws bedrock-agent get-knowledge-base` gives it.
+- Probe ($0.001): page numbers come as `_excerpt_page_number`, the 1-based PDF position, as our `page` (checked
+  against the parsed LM35). So the whole PDFs stay and the per-page split was dropped (`KB_PAGE_KEY`; `kb_prepare.py`
+  simplified). Table chunks carry `_table_id`.
+- 8b and 8c code built:
+  - `rag/kb.py` (`retrieve`, `to_hit`, `answer_question`, `warnings`, CLI);
+  - `pipeline` field in `api.ask`: the KB path never opens a connection and has its own cap kind `kb_asks`,
+    `KB_DAILY_ASK_LIMIT`;
+  - the handler logs `pipeline`; `kb` is in the Lambda zip;
+  - the page toggle and `?p=kb`;
+  - `pipeline.format_answer(result, warnings_fn=None)`;
+  - `rag/eval/kb_eval.py`, `scripts/compare_pipelines.py`;
+  - the deployed eval `--pass kb`; `call_api.py ask --pipeline kb`.
+  - Tests: `test_kb.py`, `test_kb_eval.py`, plus KB cases in the api, handler, page and deployed-eval tests.
+    836 pass (Docker off, 203 skipped).
+- Paid so far: probe $0.001, one KB question $0.0012 ("4 V to 30 V", LM35 page 4, the KB's passage 9 of 10).
+- Local KB eval run with the human's yes: $0.0588. Results in `datasheet-rag/runs/kb_compare.md`.
+  - KB: R@5 0.860, MRR 0.800, citation hit 0.837. Ours (`gen_prefix_k10`): R@5 0.977, MRR 0.865, citation hit 0.930.
+  - The gap is in table lookups and comparisons. The KB refused all 6 unanswerable questions (ours 5).
+  - KB cost $0.0012 a question against ours $0.0023.
+  - 7 ESP32 passages had no page number (not explained yet).
+- 8d prepared: `build/lambda.zip` rebuilt with `kb.py` (22,747,984 bytes); the console steps are in
+  `datasheet-rag/runs/kb_setup.md` ("Step 8d console steps").
+- 8d console work done by the human (Lambda role policy, zip, `KB_ID` and `KB_DAILY_ASK_LIMIT=50`, page uploaded and
+  invalidated).
+- Deployed checks passed:
+  - the served page equals the local file;
+  - `limits` all refused, including the unknown pipeline (400);
+  - one paid KB ask through the site, 200 in 2.5 s, LM35 page 4, $0.0012, with no `connect_ms` in the Lambda log.
+- Deployed KB pass started with the human's yes (dry run $0.062, 17 minutes); the code review is running at the same
+  time.
+- Code review (1 of 2) done and recorded, 10 findings. 8 fixed, 848 tests pass:
+  - a passage without a datasheet crashed `passage_label` (now "unknown datasheet, page unknown");
+  - a page-less source linked `#page=None` (now the plain datasheet link);
+  - `KB_DAILY_ASK_LIMIT` defaults to 50 when deployed, never off;
+  - the KB place goes back only when the cost log shows nothing was paid;
+  - the handler logs only a known pipeline name;
+  - a falsy `pipeline` is a 400;
+  - the KB plan uses `kb_managed` token means;
+  - `pipeline.answer_warnings` is shared;
+  - compare_pipelines uses `run_eval._read_csv`.
+- Not fixed: `kb_eval` writes only at the end (a re-run costs $0.06); the second agent-runtime client in `kb.py`.
+- The fixes are local only. The Lambda still runs the pre-review code, so the zip must be uploaded again after the
+  deployed KB pass.
+- Deployed KB pass: 48 of 49 answered (all 200), then the KB daily cap (50) stopped q49, as designed. $0.058.
+  - KB: citation hit 0.837, 4 answerable refused, client p50 1,656 ms, no Aurora connect in any row.
+  - Ours (step 7): 0.930, 2 refused, p50 1,088 ms.
+  - q21's first send was answered in Lambda but never reached the client (40 s timeout), so it was retried and
+    used the 50th place.
+  - Results in `kb_compare.md` and `runs/results_deployed.csv`.
+- Zip rebuilt with the review fixes (22,748,347 bytes), for the human to upload.
+- 2026-10-24 (UTC):
+  - The human uploaded it and raised `KB_DAILY_ASK_LIMIT` to 53. Claude checked the new handler is live (an unknown
+    pipeline logs as "unknown").
+  - q49 was asked: 200, a correct refusal. The deployed KB pass is complete: 49/49, citation hit 0.837, 6/6
+    unanswerable refused, 43/49 same as local, p50 1,662 ms.
+  - The lost q21 answer was explained to the human.
+  - The human asked why ours shows 5/6 unanswerable refused when Cycle 1 showed 6/6. Only the frozen
+    `gen_prefix_k10` local run has 5/6; the other Layer 7 setups and both deployed passes have 6/6.
+    - The difference is q44's reworded refusal, which `is_not_contained` misses.
+    - `kb_compare.md` was corrected: q44 is not a KB win, and refusals are a tie.
+- `.env.example` lists `KB_ID`, and the Lambda's `KB_ID` and `KB_DAILY_ASK_LIMIT`. No bucket name, KB ID or
+  account ID is in any repo file (checked).
+- `CLAUDE.md` updated: a step 8 entry in Current status, the design row and step 8 outline now describe the Managed
+  KB, and the teardown list names the KB resources.
 
 ## 2026-10-23 — Session 21: plan for upload, KB pipeline and the cost fix; step 7b built
 

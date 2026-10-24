@@ -2,7 +2,8 @@
 
 The cap used to live in Aurora, so a request over it still woke Aurora to find that out. Here it is one DynamoDB item
 per kind and UTC day: {"pk": "asks#2026-10-23", "n": 12, "expires_at": <epoch>}. `expires_at` is a few days later, so
-DynamoDB's TTL can delete old days. `kind` is "asks" for now; later steps can count other things the same way.
+DynamoDB's TTL can delete old days. `kind` is "asks" (our pipeline) or "kb_asks" (the Knowledge Base, step 8);
+later steps can count other things the same way.
 """
 import functools
 from datetime import UTC, date, datetime, timedelta
