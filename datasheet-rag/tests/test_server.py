@@ -7,7 +7,7 @@ import threading
 import psycopg
 import pytest
 
-from rag import api, server
+from rag import api, config, server
 
 
 class FakeConn:
@@ -30,7 +30,7 @@ def running(tmp_path):
         calls["connect"] += 1
         return FakeConn()
 
-    def ask(payload, open_conn):
+    def ask(payload, open_conn, upload_store=None):
         try:  # as rag.api.ask does: the connection is asked for, and a database that is down is a 503
             with open_conn():
                 pass
@@ -194,3 +194,77 @@ def test_connection_is_reused(running):
     post(port, {"question": "b"})
     request(port, "GET", "/api/documents")
     assert calls["connect"] == 1
+
+
+# ---------------------------------------------------------------- uploads (Cycle 2 step 9a)
+
+def make_place(port, filename="s.pdf", size=20):
+    response, data = request(port, "POST", "/api/uploads", json.dumps({"filename": filename, "size": size}).encode(),
+                             {"Content-Type": "application/json"})
+    return response, json.loads(data)
+
+
+def test_local_upload_round_trip(running):
+    port, calls, state = running
+    ran = []
+    state.ingest = lambda store, upload_id, data, connect: ran.append((upload_id, data))
+    response, place = make_place(port)
+    assert response.status == 200 and place["put_url"] == f"/api/uploads/{place['upload_id']}/file"
+    response, data = request(port, "PUT", place["put_url"], b"%PDF-1.4 tiny", {"Content-Type": "application/pdf"})
+    assert response.status == 202 and json.loads(data)["status"] == "ingesting"
+    assert ran == [(place["upload_id"], b"%PDF-1.4 tiny")]
+    response, data = request(port, "GET", f"/api/uploads/{place['upload_id']}")
+    assert response.status == 200 and json.loads(data)["filename"] == "s.pdf"
+    assert calls["connect"] == 0  # nothing here needs the database; the ingest opens its own connection
+
+
+def test_local_upload_file_is_sent_once(running):
+    port, _, state = running
+    state.ingest = lambda store, upload_id, data, connect: store.update(upload_id, status="ingesting")
+    _, place = make_place(port)
+    headers = {"Content-Type": "application/pdf"}
+    assert request(port, "PUT", place["put_url"], b"%PDF-1.4", headers)[0].status == 202
+    assert request(port, "PUT", place["put_url"], b"%PDF-1.4", headers)[0].status == 404
+
+
+@pytest.mark.parametrize(("path", "body", "content_type", "status"), [
+    ("/api/uploads/ffffffffffffffff/file", b"%PDF-1.4", "application/pdf", 404),
+    ("/api/uploads/not-an-id/file", b"%PDF-1.4", "application/pdf", 404),
+    ("/api/uploads/ffffffffffffffff", b"%PDF-1.4", "application/pdf", 404),
+    ("/api/uploads/ffffffffffffffff/file", b"%PDF-1.4", "text/plain", 415),
+    ("/api/uploads/ffffffffffffffff/file", b"", "application/pdf", 400),
+])
+def test_local_upload_put_refusals(running, path, body, content_type, status):
+    port, _, _ = running
+    response, _ = request(port, "PUT", path, body, {"Content-Type": content_type})
+    assert response.status == status
+
+
+def test_local_upload_over_the_limit_is_413(running, monkeypatch):
+    port, _, state = running
+    monkeypatch.setattr(config, "UPLOAD_MAX_BYTES", 1000)
+    state.ingest = lambda *args: pytest.fail("ingested")
+    _, place = make_place(port, size=900)
+    response, _ = request(port, "PUT", place["put_url"], b"%PDF-" + b"0" * 2000, {"Content-Type": "application/pdf"})
+    assert response.status == 413
+
+
+def test_local_ask_is_given_the_servers_upload_store(running):
+    port, _, state = running
+    seen = {}
+    real_ask = state.ask
+
+    def ask(payload, open_conn, upload_store=None):
+        seen["store"] = upload_store
+        return real_ask(payload, open_conn)
+
+    state.ask = ask
+    post(port, {"question": "q"})
+    assert seen["store"] is state.uploads
+
+
+def test_local_upload_from_another_host_is_refused(running):
+    port, _, _ = running
+    response, _ = request(port, "PUT", "/api/uploads/ffffffffffffffff/file", b"%PDF-1.4",
+                          {"Content-Type": "application/pdf", "Host": "evil.example"})
+    assert response.status == 403

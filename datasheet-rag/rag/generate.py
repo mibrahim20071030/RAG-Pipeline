@@ -48,6 +48,8 @@ def passage_label(hit: dict) -> str:
     """Which datasheet and PDF page a passage is from, with the printed page number when it differs."""
     part = config.DOCUMENTS.get(hit["document"], {}).get("part")
     document = hit["document"] or "unknown datasheet"  # a Knowledge Base passage may come back without one
+    if document.startswith(config.UPLOAD_PREFIX):
+        part = "Uploaded PDF"  # a visitor's upload (step 9a); its file name is the visitor's, so it is not shown here
     label = f"{part} ({document})" if part else document
     label += f", page {hit['page'] if hit['page'] is not None else 'unknown'}"
     if hit.get("page_label") and str(hit["page_label"]) != str(hit["page"]):

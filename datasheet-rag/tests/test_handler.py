@@ -14,7 +14,7 @@ import psycopg
 import pytest
 
 import handler
-from rag import api, config, costlog
+from rag import api, config, costlog, uploads
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,7 +44,7 @@ class Fakes:
         self.conns.append(FakeConnection())
         return self.conns[-1]
 
-    def ask(self, payload, open_conn):
+    def ask(self, payload, open_conn, upload_store=None):
         with open_conn() as conn:
             self.asked.append((conn, payload))
             if self.ask_error:
@@ -179,7 +179,8 @@ def real_ask(counter, answer=None):
         return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
                 "cut_off": False, "timings_ms": {"search": 1.0}}
 
-    return lambda payload, open_conn: api.ask(payload, open_conn, answer_fn, counter)
+    return lambda payload, open_conn, upload_store=None: api.ask(payload, open_conn, answer_fn, counter,
+                                                               upload_store=upload_store)
 
 
 @pytest.fixture
@@ -187,6 +188,7 @@ def capped(fakes, monkeypatch):
     """The fakes with the real api.ask, a daily cap of 2 and a fake counter; db.list_documents answers too."""
     monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 2)
     monkeypatch.setattr(api.db, "list_documents", lambda conn: [{"name": "lm35", "file": "lm35.pdf"}])
+    monkeypatch.setattr(api.db, "delete_expired_uploads", lambda conn: 0)
     fakes.counter = FakeCounter()
     fakes.ask = real_ask(fakes.counter)
     return fakes
@@ -262,6 +264,7 @@ def test_database_lost_during_ask_gives_503(fakes, monkeypatch):
         raise psycopg.OperationalError("server closed the connection")
 
     monkeypatch.setattr(api.db, "list_documents", lost)
+    monkeypatch.setattr(api.db, "delete_expired_uploads", lambda conn: 0)
     fakes.ask = real_ask(None)
     status, body = parsed(fakes.call(v2("POST", "/api/ask", ASK)))
     assert status == 503 and body["error"] == api.DATABASE_WAKING
@@ -344,7 +347,8 @@ def test_kb_ask_never_connects_and_logs_its_pipeline(capped, capsys, monkeypatch
         return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
                 "cut_off": False, "timings_ms": {"retrieve": 1.0, "generate": 2.0}}
 
-    capped.ask = lambda payload, open_conn: api.ask(payload, open_conn, None, capped.counter, kb_answer)
+    capped.ask = lambda payload, open_conn, upload_store=None: api.ask(payload, open_conn, None, capped.counter,
+                                                                       kb_answer)
     status, body = parsed(capped.call(v2("POST", "/api/ask", json.dumps({"question": "q", "pipeline": "kb"}))))
     assert status == 200 and body["setup"]["pipeline"] == "kb"
     assert capped.conns == []
@@ -356,3 +360,162 @@ def test_kb_ask_never_connects_and_logs_its_pipeline(capped, capsys, monkeypatch
 def test_only_a_known_pipeline_name_is_logged(fakes, capsys, name, logged):
     fakes.call(v2("POST", "/api/ask", json.dumps({"question": "q", "pipeline": name})))
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["pipeline"] == logged
+
+
+# ---------------------------------------------------------------- uploads (Cycle 2 step 9a)
+
+UPLOAD_ID = "0123456789abcdef"
+
+
+def upload_call(fakes, event, store, presign=None, kb_status=None):
+    return handler.lambda_handler(event, None, connect=fakes.connect, ask=fakes.ask, store=store,
+                                  presign=presign or (lambda upload_id: {"post": {"url": "u", "fields": {}}}),
+                                  kb_status=kb_status)
+
+
+def test_start_upload_route_never_connects(fakes, monkeypatch, capsys):
+    monkeypatch.setattr(config, "UPLOAD_DAILY_LIMIT", 0)
+    store = uploads.MemoryStore()
+    response = upload_call(fakes, v2("POST", "/api/uploads", json.dumps({"filename": "s.pdf", "size": 100})), store)
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200 and uploads.valid_id(body["upload_id"]) and body["post"]["url"] == "u"
+    assert fakes.conns == [] and fakes.asked == []
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["path"] == "/api/uploads" and line["upload"] is True and "connect_ms" not in line
+
+
+def test_upload_status_route_does_not_log_the_id(fakes, capsys):
+    store = uploads.MemoryStore()
+    store.create(uploads.new_record(UPLOAD_ID, "s.pdf", kb=False))
+    response = upload_call(fakes, v2("GET", f"/api/uploads/{UPLOAD_ID}"), store)
+    assert response["statusCode"] == 200 and json.loads(response["body"])["status"] == "waiting"
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["path"] == "/api/uploads/{id}" and UPLOAD_ID not in json.dumps(line)
+    assert fakes.conns == []
+
+
+@pytest.mark.parametrize(("method", "path", "status"), [
+    ("GET", "/api/uploads", 405),
+    ("POST", f"/api/uploads/{UPLOAD_ID}", 405),
+    ("GET", f"/api/uploads/{UPLOAD_ID}/file", 404),
+    ("GET", "/api/uploads/", 404),
+    ("GET", "/api/uploads/not-an-id", 404),
+])
+def test_upload_routes_refuse_the_wrong_shape(fakes, method, path, status):
+    response = upload_call(fakes, v2(method, path, json.dumps({"filename": "s.pdf", "size": 1}) if method == "POST" else None),
+                           uploads.MemoryStore())
+    assert response["statusCode"] == status and fakes.conns == []
+
+
+def test_upload_routes_are_off_with_the_demo(fakes, monkeypatch):
+    monkeypatch.setattr(config, "DEMO_ENABLED", False)
+    response = upload_call(fakes, v2("POST", "/api/uploads", json.dumps({"filename": "s.pdf", "size": 1})), uploads.MemoryStore())
+    assert response["statusCode"] == 503
+
+
+def test_ask_passes_the_upload_store_on(fakes):
+    store = uploads.MemoryStore()
+    seen = {}
+
+    def ask(payload, open_conn, upload_store=None):
+        seen["store"] = upload_store
+        return 200, {}
+
+    handler.lambda_handler(v2("POST", "/api/ask", json.dumps({"question": "q"})), None, connect=fakes.connect, ask=ask,
+                           store=store)
+    assert seen["store"] is store
+
+
+# ---- the ingest function
+
+def s3_event(key, size=1000, bucket="uploads-bucket"):
+    return {"Records": [{"eventSource": "aws:s3", "s3": {"bucket": {"name": bucket},
+                                                         "object": {"key": key, "size": size}}}]}
+
+
+class FakeS3:
+    def __init__(self, data=b"%PDF-1.4 data"):
+        self.data, self.deleted, self.read = data, [], []
+
+    def get_object(self, Bucket, Key):
+        self.read.append(Key)
+        return {"Body": __import__("io").BytesIO(self.data)}
+
+    def delete_object(self, Bucket, Key):
+        self.deleted.append(Key)
+
+
+def waiting(kb=False):
+    store = uploads.MemoryStore()
+    store.create(uploads.new_record(UPLOAD_ID, "s.pdf", kb=kb))
+    store.take_lock(UPLOAD_ID, 60)
+    return store
+
+
+def test_ingest_handler_runs_the_upload_and_deletes_the_incoming_file(capsys):
+    store, s3, ran = waiting(), FakeS3(), []
+
+    def run(store_, upload_id, data, connect, to_kb):
+        ran.append((upload_id, data, to_kb))
+        store_.update(upload_id, status="ready", ours="ready", chunks=4)
+        return store_.get(upload_id)
+
+    result = handler.ingest_handler(s3_event(f"incoming/{UPLOAD_ID}.pdf"), None, store=store, s3=s3,
+                                    connect=lambda: None, run=run)
+    assert result == {"processed": 1}
+    assert ran == [(UPLOAD_ID, b"%PDF-1.4 data", False)]
+    assert s3.deleted == [f"incoming/{UPLOAD_ID}.pdf"]
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["ingest"] is True and line["status"] == "ready" and line["chunks"] == 4
+
+
+@pytest.mark.parametrize("key", ["incoming/ffffffffffffffff.pdf", "incoming/../x.pdf", f"incoming/{UPLOAD_ID}.pdf"])
+def test_ingest_handler_skips_a_file_without_a_waiting_record(key, capsys):
+    store = waiting()
+    store.update(UPLOAD_ID, status="ready")  # a retry of an upload that was already done
+    s3 = FakeS3()
+    handler.ingest_handler(s3_event(key), None, store=store, s3=s3, connect=lambda: None,
+                           run=lambda *a, **k: pytest.fail("ran"))
+    assert s3.read == [] and s3.deleted == [key]
+
+
+def test_ingest_handler_ignores_records_outside_incoming():
+    s3 = FakeS3()
+    result = handler.ingest_handler(s3_event(f"kb/{UPLOAD_ID}.pdf"), None, store=waiting(), s3=s3,
+                                    connect=lambda: None, run=lambda *a, **k: pytest.fail("ran"))
+    assert result == {"processed": 0} and s3.deleted == []
+
+
+def test_ingest_handler_refuses_an_oversized_file_unread(monkeypatch, capsys):
+    monkeypatch.setattr(config, "UPLOAD_MAX_BYTES", 100)
+    store, s3 = waiting(), FakeS3()
+    handler.ingest_handler(s3_event(f"incoming/{UPLOAD_ID}.pdf", size=101), None, store=store, s3=s3,
+                           connect=lambda: None, run=lambda *a, **k: pytest.fail("ran"))
+    assert s3.read == [] and store.get(UPLOAD_ID)["status"] == "failed"
+    assert store.take_lock("next", 60)  # released
+
+
+def test_ingest_handler_marks_a_failed_read(capsys):
+    class BrokenS3(FakeS3):
+        def get_object(self, Bucket, Key):
+            raise OSError("network")
+
+    store, s3 = waiting(), BrokenS3()
+    handler.ingest_handler(s3_event(f"incoming/{UPLOAD_ID}.pdf"), None, store=store, s3=s3, connect=lambda: None,
+                           run=lambda *a, **k: pytest.fail("ran"))
+    record = store.get(UPLOAD_ID)
+    assert record["status"] == "failed" and "network" not in record["error"]
+    assert s3.deleted == [f"incoming/{UPLOAD_ID}.pdf"] and store.take_lock("next", 60)
+
+
+def test_ingest_handler_reads_url_encoded_keys():
+    store, s3, ran = waiting(), FakeS3(), []
+    handler.ingest_handler(s3_event(f"incoming%2F{UPLOAD_ID}.pdf"), None, store=store, s3=s3, connect=lambda: None,
+                           run=lambda store_, upload_id, *a, **k: ran.append(upload_id) or {})
+    assert ran == [UPLOAD_ID]
+
+
+def test_the_api_zip_never_imports_pdfplumber():
+    # The query Lambda has no pdfplumber: importing handler (and through it api, uploads, kb) must not need it.
+    code = "import sys, handler; assert 'pdfplumber' not in sys.modules and 'rag.ingest' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)

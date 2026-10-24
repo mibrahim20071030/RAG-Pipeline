@@ -8,6 +8,9 @@ Run from datasheet-rag, with API_URL (the invoke URL, no trailing path) in .env 
     python scripts\\call_api.py throttle --route ask --count 6 free: empty questions at once (Lambda answers 400)
     python scripts\\call_api.py usage                          free: today's count of the daily cap, read from DynamoDB
     python scripts\\call_api.py --base site page               free: the page itself, and http:// sent on to https://
+    python scripts\\call_api.py upload <file.pdf> --yes         paid: one upload (Titan, about $0.001 for 100 chunks)
+    python scripts\\call_api.py upload-status <id>              free: the upload's record
+    python scripts\\call_api.py ask "..." --upload <id> --yes   paid: a question about that upload
 
 No AWS key is used except by `usage`, which reads the DynamoDB table USAGE_TABLE with the dev user's key.
 """
@@ -15,6 +18,7 @@ import argparse
 import http.client
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.error
@@ -62,11 +66,61 @@ def show(status: int, text: str, seconds: float) -> None:
         print(text)
 
 
-def ask_body(question: str, document: str | None = None, pipeline: str | None = None) -> bytes:
+def ask_body(question: str, document: str | None = None, pipeline: str | None = None,
+             upload_id: str | None = None) -> bytes:
     body = {"question": question, "document": document}
     if pipeline:
         body["pipeline"] = pipeline
+    if upload_id:
+        body["upload_id"] = upload_id
     return json.dumps(body).encode()
+
+
+def upload_body(filename: str, size: int) -> bytes:
+    return json.dumps({"filename": filename, "size": size}).encode()
+
+
+def multipart(fields: dict, data: bytes, filename: str) -> tuple[bytes, str]:
+    """A multipart/form-data body for S3's presigned POST: the form fields, then the file last (S3 requires it)."""
+    boundary = "----datasheet-rag-" + secrets.token_hex(8)
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+             for name, value in fields.items()]
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                 f"Content-Type: application/pdf\r\n\r\n".encode() + data + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def cmd_upload(path: Path, wait: bool) -> None:
+    """One upload as the page makes it: a place from /api/uploads, the file to S3, then the record until ready."""
+    data = path.read_bytes()
+    status, _, text, seconds = call("POST", "/api/uploads", upload_body(path.name, len(data)), JSON)
+    show(status, text, seconds)
+    if status != 200:
+        return
+    place = json.loads(text)
+    if "post" not in place:
+        sys.exit("The answer has no presigned POST (a local server wants a PUT instead).")
+    body, content_type = multipart(place["post"]["fields"], data, path.name)
+    request = urllib.request.Request(place["post"]["url"], data=body, method="POST",
+                                     headers={"content-type": content_type})
+    start = time.perf_counter()
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            print(f"S3 POST -> {response.status} in {time.perf_counter() - start:.2f} s")
+    except urllib.error.HTTPError as error:
+        sys.exit(f"S3 POST -> {error.code}: {error.read().decode('utf-8', 'replace')[:400]}")
+    print(f"upload_id {place['upload_id']}")
+    while wait:
+        time.sleep(10)
+        status, _, text, _ = call("GET", f"/api/uploads/{place['upload_id']}")
+        record = json.loads(text) if text.startswith("{") else {}
+        print(f"  {time.strftime('%H:%M:%S')}  {status}  status {record.get('status')}, ours {record.get('ours')}, "
+              f"kb {record.get('kb')}, {record.get('embedded')} of {record.get('chunks')} embedded"
+              f"{', ' + record['error'] if record.get('error') else ''}", flush=True)
+        if status != 200 or record.get("status") == "failed" or (
+                record.get("ours") == "ready" and record.get("kb") not in ("waiting", "syncing")):
+            break
 
 
 def cmd_limits() -> None:
@@ -82,6 +136,12 @@ def cmd_limits() -> None:
          ask_body("x" * (config.API_MAX_QUESTION_CHARS + 1)), JSON),
         ("20 KB body", "POST", "/api/ask", ask_body("x" * 20_000), JSON),
         ("body that is not JSON", "POST", "/api/ask", b"question=hi", {"content-type": "application/x-www-form-urlencoded"}),
+        ("upload of a .txt name", "POST", "/api/uploads", upload_body("notes.txt", 1000), JSON),
+        ("upload of 11 MB", "POST", "/api/uploads", upload_body("big.pdf", 11 * 1024 * 1024), JSON),
+        ("unknown upload GET /api/uploads/<id>", "GET", "/api/uploads/0123456789abcdef", None, {}),
+        ("malformed upload id", "GET", "/api/uploads/not-an-id", None, {}),
+        ("ask about an unknown upload", "POST", "/api/ask",
+         ask_body("What is the supply voltage?", upload_id="0123456789abcdef"), JSON),
     ]
     for name, method, path, body, headers in checks:
         status, _, text, seconds = call(method, path, body, headers)
@@ -136,7 +196,14 @@ def main(argv: list[str]) -> None:
     ask.add_argument("question")
     ask.add_argument("--document", choices=list(config.DOCUMENTS))
     ask.add_argument("--pipeline", choices=list(config.PIPELINES), default="ours")
+    ask.add_argument("--upload", help="ask about this upload id")
     ask.add_argument("--yes", action="store_true", help="make the paid calls without stopping first")
+    up = sub.add_parser("upload")
+    up.add_argument("pdf", type=Path)
+    up.add_argument("--no-wait", action="store_true", help="do not follow the record until it is ready")
+    up.add_argument("--yes", action="store_true", help="make the paid calls without stopping first")
+    up_status = sub.add_parser("upload-status")
+    up_status.add_argument("upload_id")
     sub.add_parser("limits")
     throttle = sub.add_parser("throttle")
     throttle.add_argument("--route", choices=["ask"], required=True)
@@ -152,8 +219,16 @@ def main(argv: list[str]) -> None:
         if not args.yes:
             sys.exit("This makes paid Bedrock calls: about $0.0023 for a new question, $0.0003 for a cached one, "
                      "$0.0012 on the Knowledge Base pipeline. Run again with --yes.")
-        status, _, text, seconds = call("POST", "/api/ask", ask_body(args.question, args.document, args.pipeline),
-                                        JSON)
+        status, _, text, seconds = call("POST", "/api/ask", ask_body(args.question, args.document, args.pipeline,
+                                                                     args.upload), JSON)
+        show(status, text, seconds)
+    elif args.command == "upload":
+        if not args.yes:
+            sys.exit("This makes paid Titan calls (about $0.0002 per 20 passages) and uses one of the day's "
+                     f"{config.UPLOAD_DAILY_LIMIT or 5} uploads. Run again with --yes.")
+        cmd_upload(args.pdf, wait=not args.no_wait)
+    elif args.command == "upload-status":
+        status, _, text, seconds = call("GET", f"/api/uploads/{args.upload_id}")
         show(status, text, seconds)
     elif args.command == "limits":
         cmd_limits()

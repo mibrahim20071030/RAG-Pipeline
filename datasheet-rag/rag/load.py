@@ -21,12 +21,13 @@ from rag.chunk_base import approx_tokens
 from rag.embed import embed_key, text_hash
 
 
-def embed_input(chunk_: dict, prefixed: bool = False) -> str:
+def embed_input(chunk_: dict, prefixed: bool = False, part: str | None = None) -> str:
     """The string that is embedded for a chunk: its text, or for the header-prefix experiment (Layer 7) the
-    part, document and section on a line before it. The stored text is the plain text either way."""
+    part, document and section on a line before it. The stored text is the plain text either way. `part` names a
+    document that is not in config.DOCUMENTS (an uploaded PDF, step 9a)."""
     if not prefixed:
         return chunk_["text"]
-    part = config.DOCUMENTS.get(chunk_["document"], {}).get("part")
+    part = config.DOCUMENTS.get(chunk_["document"], {}).get("part") or part
     header = f"{part} ({chunk_['document']})" if part else chunk_["document"]
     if chunk_.get("section"):
         header += f". {chunk_['section']}"
@@ -42,7 +43,7 @@ def strategy_inputs(parsed: dict, strategy: str) -> tuple[list[dict], list[str]]
     """The chunks of a (possibly prefixed) strategy and the string embedded for each."""
     base = strategy.removesuffix(config.HEADER_PREFIX)
     chunks = chunk.chunk_document(parsed, base)
-    return chunks, [embed_input(c, prefixed=base != strategy) for c in chunks]
+    return chunks, [embed_input(c, prefixed=base != strategy, part=parsed.get("part")) for c in chunks]
 
 
 def parsed_documents() -> list[str]:

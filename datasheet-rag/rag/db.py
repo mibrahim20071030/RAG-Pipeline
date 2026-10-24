@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS documents (
     name     TEXT NOT NULL UNIQUE,
     file     TEXT,
     part     TEXT,
-    revision TEXT
+    revision TEXT,
+    source   TEXT NOT NULL DEFAULT 'curated',
+    title    TEXT,
+    expires_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -61,6 +64,14 @@ CREATE TABLE IF NOT EXISTS rerank_cache (
     score           DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (question_sha256, text_sha256, model)
 );
+"""
+
+# Columns added after a table was first created (step 9a: uploads). CREATE TABLE IF NOT EXISTS leaves an existing table
+# as it is, so a database made earlier gets them here; each is a no-op once the column exists.
+_ADDED_COLUMNS = """
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'curated';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 """
 
 
@@ -146,6 +157,7 @@ def create_schema(conn: psycopg.Connection) -> None:
         # In public whatever the search path, so that dropping a test schema cannot take the extension with it.
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public")
         conn.execute(sql.SQL(_TABLES).format(dims=sql.Literal(int(config.EMBED_DIMENSIONS))))
+        conn.execute(_ADDED_COLUMNS)
 
 
 def vector_text(vector) -> str:
@@ -170,6 +182,26 @@ def upsert_document(conn: psycopg.Connection, name: str, file: str | None = None
         (name, file, part, revision),
     ).fetchone()
     return row[0]
+
+
+def store_upload_document(conn: psycopg.Connection, name: str, file: str, title: str, expires_at) -> int:
+    """Insert an uploaded PDF as a document (source 'upload'), or replace its details. Returns its id."""
+    row = conn.execute(
+        """
+        INSERT INTO documents (name, file, part, revision, source, title, expires_at)
+        VALUES (%s, %s, NULL, NULL, 'upload', %s, %s)
+        ON CONFLICT (name) DO UPDATE SET
+            file = EXCLUDED.file, source = 'upload', title = EXCLUDED.title, expires_at = EXCLUDED.expires_at
+        RETURNING id
+        """,
+        (name, file, title, expires_at),
+    ).fetchone()
+    return row[0]
+
+
+def delete_expired_uploads(conn: psycopg.Connection) -> int:
+    """Delete the uploads whose time is up, with their chunks (ON DELETE CASCADE). Returns how many."""
+    return conn.execute("DELETE FROM documents WHERE source = 'upload' AND expires_at <= now()").rowcount
 
 
 def replace_chunks(conn: psycopg.Connection, document_id: int, strategy: str, chunks: list[dict],
@@ -279,12 +311,13 @@ def store_rerank_scores(conn: psycopg.Connection, question_sha256: str, model: s
 
 
 def count_chunks(conn: psycopg.Connection, strategy: str | None = None, document: str | None = None) -> int:
-    """Number of stored chunks, optionally for one strategy and/or one document name."""
+    """Number of stored chunks, optionally for one strategy and/or one document name. With no document named, only
+    the curated datasheets are counted, never the visitors' uploads."""
     row = conn.execute(
         """
         SELECT count(*) FROM chunks c JOIN documents d ON d.id = c.document_id
         WHERE (%(strategy)s::text IS NULL OR c.strategy = %(strategy)s)
-          AND (%(document)s::text IS NULL OR d.name = %(document)s)
+          AND (CASE WHEN %(document)s::text IS NULL THEN d.source = 'curated' ELSE d.name = %(document)s END)
         """,
         {"strategy": strategy, "document": document},
     ).fetchone()
@@ -292,10 +325,11 @@ def count_chunks(conn: psycopg.Connection, strategy: str | None = None, document
 
 
 def strategy_counts(conn: psycopg.Connection) -> dict[tuple[str, str], int]:
-    """(document name, strategy) -> number of stored chunks."""
+    """(document name, strategy) -> number of stored chunks, for the curated datasheets."""
     rows = conn.execute(
         """
         SELECT d.name, c.strategy, count(*) FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE d.source = 'curated'
         GROUP BY d.name, c.strategy
         """
     ).fetchall()
@@ -309,15 +343,22 @@ def embedding_dims(conn: psycopg.Connection) -> int | None:
 
 
 def list_documents(conn: psycopg.Connection) -> list[dict]:
-    rows = conn.execute("SELECT id, name, file, part, revision FROM documents ORDER BY name").fetchall()
+    """The curated datasheets, never the visitors' uploads."""
+    rows = conn.execute(
+        "SELECT id, name, file, part, revision FROM documents WHERE source = 'curated' ORDER BY name"
+    ).fetchall()
     return [dict(zip(("id", "name", "file", "part", "revision"), row, strict=True)) for row in rows]
 
 
 def mean_chunk_tokens(conn: psycopg.Connection, strategy: str, chars_per_token: int) -> float:
-    """Mean approximate tokens of the strategy's stored chunk texts, each rounded up as `approx_tokens` does;
-    0 when none is stored."""
+    """Mean approximate tokens of the strategy's stored chunk texts of the curated datasheets, each rounded up as
+    `approx_tokens` does; 0 when none is stored."""
     row = conn.execute(
-        "SELECT coalesce(avg(ceil(length(text)::numeric / %s)), 0) FROM chunks WHERE strategy = %s",
+        """
+        SELECT coalesce(avg(ceil(length(c.text)::numeric / %s)), 0)
+        FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE c.strategy = %s AND d.source = 'curated'
+        """,
         (chars_per_token, strategy),
     ).fetchone()
     return float(row[0])
@@ -343,15 +384,20 @@ _HIT_KEYS = ("id", "document", "page", "page_label", "section", "kind", "text", 
 # Keyword search configuration -> the generated column built with it (tsv_english, tsv_simple in `_TABLES`).
 _TSV_COLUMNS = {name: f"tsv_{name}" for name in config.KEYWORD_CONFIGS}
 
+# Which documents a search reads: with no document named, only the curated datasheets, so an upload never reaches
+# another visitor's search or the evaluation; with one named, that document only, and an upload only until it expires.
+_DOCUMENT_FILTER = """(CASE WHEN %(document)s::text IS NULL THEN d.source = 'curated'
+      ELSE d.name = %(document)s AND (d.expires_at IS NULL OR d.expires_at > now()) END)"""
+
 # The raw `<=>` stands alone in ORDER BY so that an index can serve it; the score is computed in SELECT only.
 _NEAREST_SQL = """
 SELECT c.id, d.name, c.page, c.page_label, c.section, c.kind, c.text,
        1 - (c.embedding <=> %(vector)s::vector) AS score
 FROM chunks c JOIN documents d ON d.id = c.document_id
-WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+WHERE c.strategy = %(strategy)s AND {documents}
 ORDER BY c.embedding <=> %(vector)s::vector
 LIMIT %(n)s
-"""
+""".replace("{documents}", _DOCUMENT_FILTER)
 
 # One tsquery per term, OR-joined by summing. Each term is weighted by how rare it is in the searched set
 # (N chunks, df of them matching), times ts_rank normalised by document length (the 1).
@@ -362,11 +408,11 @@ WITH terms AS (
     WHERE numnode(q) > 0
 ), total AS (
     SELECT count(*)::float AS n FROM chunks c JOIN documents d ON d.id = c.document_id
-    WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+    WHERE c.strategy = %(strategy)s AND {documents}
 ), hits AS (
     SELECT c.id, ts_rank(c.{col}, t.q, 1) AS r, count(*) OVER (PARTITION BY t.q::text) AS df
     FROM chunks c JOIN documents d ON d.id = c.document_id JOIN terms t ON c.{col} @@ t.q
-    WHERE c.strategy = %(strategy)s AND (%(document)s::text IS NULL OR d.name = %(document)s)
+    WHERE c.strategy = %(strategy)s AND {documents}
 )
 SELECT c.id, d.name, c.page, c.page_label, c.section, c.kind, c.text,
        sum(ln(1 + (total.n - h.df + 0.5) / (h.df + 0.5)) * h.r) AS score
@@ -374,7 +420,7 @@ FROM hits h JOIN chunks c ON c.id = h.id JOIN documents d ON d.id = c.document_i
 GROUP BY c.id, d.name
 ORDER BY score DESC, c.id
 LIMIT %(n)s
-"""
+""".replace("{documents}", _DOCUMENT_FILTER)
 
 
 def _hits(rows: list[tuple]) -> list[dict]:

@@ -178,3 +178,61 @@ def test_passage_without_a_datasheet_or_page_does_not_crash_the_answer():
     prompt = llm.requests[0]["messages"][0]["content"][0]["text"]
     assert "[1] unknown datasheet, page unknown" in prompt
     assert answer["sources"][0]["page"] == 4
+
+
+# ---------------------------------------------------------------- two data sources (Cycle 2 step 9a)
+
+def test_search_of_all_datasheets_is_kept_to_the_curated_data_source(monkeypatch):
+    monkeypatch.setattr(config, "KB_CURATED_DATA_SOURCE_ID", "DSCURATED1")
+    managed = kb.search_config(None, 10)["managedSearchConfiguration"]
+    assert managed["filter"] == {"equals": {"key": "_data_source_id", "value": "DSCURATED1"}}
+
+
+def test_without_the_curated_id_there_is_no_data_source_filter(monkeypatch):
+    monkeypatch.setattr(config, "KB_CURATED_DATA_SOURCE_ID", "")
+    assert "filter" not in kb.search_config(None, 10)["managedSearchConfiguration"]
+
+
+def test_a_named_upload_is_filtered_by_its_name(monkeypatch):
+    monkeypatch.setattr(config, "KB_CURATED_DATA_SOURCE_ID", "DSCURATED1")
+    managed = kb.search_config("upload-0123456789abcdef", 10)["managedSearchConfiguration"]
+    assert managed["filter"] == {"equals": {"key": "document", "value": "upload-0123456789abcdef"}}
+
+
+class FakeAgent:
+    def __init__(self, job):
+        self.job, self.calls = job, []
+
+    def get_ingestion_job(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"ingestionJob": self.job}
+
+    def start_ingestion_job(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"ingestionJob": {"ingestionJobId": "JOB1234567"}}
+
+
+def test_ingestion_status_reads_the_uploads_data_source(monkeypatch):
+    monkeypatch.setattr(config, "KB_ID", "KBTEST1234")
+    monkeypatch.setattr(config, "KB_UPLOAD_DATA_SOURCE_ID", "DSUPLOAD01")
+    agent = FakeAgent({"status": "COMPLETE", "statistics": {"numberOfDocumentsFailed": 1}})
+    assert kb.ingestion_status("JOB1234567", client=agent) == ("COMPLETE", 1)
+    assert agent.calls == [{"knowledgeBaseId": "KBTEST1234", "dataSourceId": "DSUPLOAD01",
+                            "ingestionJobId": "JOB1234567"}]
+    assert kb.ingestion_status("J", client=FakeAgent({"status": "IN_PROGRESS"})) == ("IN_PROGRESS", 0)
+
+
+def test_start_ingestion_names_the_upload(monkeypatch):
+    monkeypatch.setattr(config, "KB_UPLOAD_DATA_SOURCE_ID", "DSUPLOAD01")
+    agent = FakeAgent({})
+    assert kb.start_ingestion("0123456789abcdef", client=agent) == "JOB1234567"
+    assert agent.calls[0]["dataSourceId"] == "DSUPLOAD01" and "0123456789abcdef" in agent.calls[0]["description"]
+
+
+def test_with_an_uploads_source_a_search_of_all_needs_the_curated_filter(monkeypatch):
+    # Without it, every visitor's upload would be in the search (review of step 9a).
+    monkeypatch.setattr(config, "KB_UPLOAD_DATA_SOURCE_ID", "DSUPLOAD01")
+    monkeypatch.setattr(config, "KB_CURATED_DATA_SOURCE_ID", "")
+    with pytest.raises(RuntimeError, match="KB_CURATED_DATA_SOURCE_ID"):
+        kb.search_config(None, 10)
+    assert kb.search_config("lm35", 10)["managedSearchConfiguration"]["filter"]["equals"]["value"] == "lm35"

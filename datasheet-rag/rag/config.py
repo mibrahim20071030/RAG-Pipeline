@@ -133,6 +133,39 @@ KB_DOCUMENT_KEY = "document"
 KB_USD_PER_RETRIEVE = 0.001
 KB_USD_PER_GB_MONTH = 5.0
 KB_DIR = ROOT / "build" / "kb"  # what kb_prepare writes, for upload to the KB's S3 bucket
+# Step 9a: the KB has two data sources, the 4 datasheets and the visitors' uploads. A search that names no datasheet
+# is kept to the curated one by AWS's reserved metadata key for the data source (Managed KB docs, 2026-10-24).
+# Empty IDs mean no data source filter, as in step 8.
+KB_DATA_SOURCE_KEY = "_data_source_id"
+KB_CURATED_DATA_SOURCE_ID = os.environ.get("KB_CURATED_DATA_SOURCE_ID", "")
+KB_UPLOAD_DATA_SOURCE_ID = os.environ.get("KB_UPLOAD_DATA_SOURCE_ID", "")
+
+# PDF upload (Cycle 2 step 9a, limits chosen by the human on 2026-10-24). An upload is stored as document
+# "upload-<id>", kept out of every search that does not name it, and deleted after UPLOAD_KEEP_HOURS.
+UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+UPLOAD_MAX_PAGES = 100
+UPLOAD_MAX_CHUNKS = 300
+UPLOAD_KEEP_HOURS = 24
+# Uploads per UTC day for everyone, counted like the asks (kind "uploads"). 0 is off; deployed, a missing variable
+# means 5, not off.
+UPLOAD_DAILY_LIMIT = int(os.environ.get("UPLOAD_DAILY_LIMIT") or ("5" if DEPLOYED else "0"))
+# Titan allows 60 calls a minute on this account; an upload takes 40, so visitors' questions still get through.
+UPLOAD_EMBED_PER_MIN = 40
+UPLOAD_EMBED_BATCH = 20  # texts per paced batch: one cost log row and one progress update
+UPLOAD_STRATEGY = DEFAULT_STRATEGY  # stored as the strategy the pipeline searches
+UPLOAD_PREFIX = "upload-"  # document name of an upload: UPLOAD_PREFIX + its id
+UPLOAD_FILENAME_CHARS = 120
+# Deployed: the browser posts the file to this bucket under UPLOAD_INCOMING with a presigned POST that expires after
+# UPLOAD_POST_EXPIRES_S; the ingest function copies a checked file under UPLOAD_KB_PREFIX for the KB's uploads data
+# source. A lifecycle rule on the bucket deletes both after a day.
+UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "")
+UPLOAD_INCOMING = "incoming/"
+UPLOAD_KB_PREFIX = "kb/"
+UPLOAD_POST_EXPIRES_S = 600
+# One upload is processed at a time (Titan's quota and one KB ingestion job per data source). The lock is held for
+# the presigned POST's life plus a minute, then for the ingest function's 15 minutes once the file arrives.
+UPLOAD_LOCK_WAIT_S = UPLOAD_POST_EXPIRES_S + 60
+UPLOAD_LOCK_INGEST_S = 16 * 60
 
 # Evaluation (Layer 7). Questions are hand-checked against the PDFs; a source is (document, PDF page).
 QUESTIONS = ROOT / "data" / "questions.jsonl"
@@ -187,7 +220,7 @@ WEB_DIR = ROOT / "web"
 SERVER_HOST = "127.0.0.1"  # never 0.0.0.0: anyone who can reach the server can spend on the AWS account
 SERVER_PORT = 8000
 API_MAX_QUESTION_CHARS = 500
-API_MAX_BODY_BYTES = 10_000
+API_MAX_BODY_BYTES = 10_000  # JSON requests; a local PDF upload (step 9a) may be UPLOAD_MAX_BYTES
 # Questions answered per UTC day before /api/ask says "try tomorrow" (Cycle 2 step 5). 0 is off; Lambda sets 50.
 # Counted in the DynamoDB table USAGE_TABLE (step 7b), so a request over the cap never wakes Aurora.
 API_DAILY_ASK_LIMIT = int(os.environ.get("API_DAILY_ASK_LIMIT") or "0")
