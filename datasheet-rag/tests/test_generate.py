@@ -167,6 +167,56 @@ def test_sentence_followed_only_by_labels_is_a_refusal():
     assert generate.is_not_contained(f"{config.NOT_CONTAINED.rstrip('.')} [1, 2].", sources)
 
 
+REWORDED_REFUSALS = [
+    # The real one: gen_prefix_k10, q44, Layer 7.
+    ("Sorry, I cannot provide information about the unit price of the LM35 in quantities of 1,000 as it is not "
+    "mentioned in the provided datasheets."),
+    "I'm sorry, but the provided passages do not mention the price.",
+    "The datasheets do not contain information about Bluetooth support.",
+    "This information is not specified in the provided datasheets.",
+    "There is no information about the warranty in the datasheets.",
+    "The provided datasheets don’t contain the price.",  # a curly apostrophe
+    "The price isn't mentioned in the datasheets.",
+    "This cannot be determined from the passages.",
+]
+
+
+@pytest.mark.parametrize("answer", REWORDED_REFUSALS)
+def test_a_reworded_refusal_that_cites_nothing_is_a_refusal(answer):
+    assert generate.is_not_contained(answer)
+    assert generate.is_not_contained(answer, [])
+
+
+@pytest.mark.parametrize("answer", REWORDED_REFUSALS)
+def test_a_reworded_refusal_that_cites_a_passage_is_an_answer(answer):
+    cited = f"{answer} The supply range is 4 V to 30 V [1]."
+    sources = generate.resolve_citations(cited, chunks(3))["sources"]
+    assert sources and not generate.is_not_contained(cited, sources)
+
+
+@pytest.mark.parametrize("answer", [
+    "The LM35 does not require external calibration.",  # missing-sounding, but about the part, not the datasheets
+    "The datasheet gives a supply range of 4 V to 30 V.",  # names the datasheet, says nothing is missing
+    "The ESP32 has 520 KB of SRAM.",
+    "The LM35 output is not provided with short-circuit protection.",  # "provided" alone must not name the source
+])
+def test_an_uncited_statement_is_not_a_refusal(answer):
+    # Scored with no sources, the hardest case: only the wording decides.
+    assert not generate.is_not_contained(answer, [])
+
+
+def test_a_cited_answer_that_names_a_gap_is_an_answer():
+    answer = "Typical accuracy is ±0.5 °C [1]; the datasheet does not specify a maximum."
+    sources = generate.resolve_citations(answer, chunks(3))["sources"]
+    assert sources and not generate.is_not_contained(answer, sources)
+
+
+def test_generate_marks_a_reworded_refusal_and_lists_no_source():
+    llm = FakeLLM(REWORDED_REFUSALS[0])
+    result = generate.generate("price?", chunks(3), client=llm)
+    assert result["not_contained"] and result["sources"] == []
+
+
 def test_prompt_asks_for_the_sentence_without_citations():
     assert "no citation" in generate.system_prompt()
 

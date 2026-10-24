@@ -29,7 +29,7 @@ The question: **build your own RAG pipeline, or let AWS handle it?**
 | MRR@10 | 0.865 | 0.800 |
 | Citation hit (answerable) | 0.930 (40/43) | 0.837 (36/43) |
 | Answerable refused | 0.047 (2) | 0.070 (3) |
-| Unanswerable refused | 0.833 (5/6) | 1.000 (6/6) |
+| Unanswerable refused | 1.000 (6/6, re-scored 2026-10-24; 5/6 before) | 1.000 (6/6) |
 | Invalid labels | 0 | 0 |
 | Answer ms (median) | 513 | 449 |
 | Retrieval ms (median) | search + rerank, cached locally | 980 (max 1,734) |
@@ -56,12 +56,13 @@ Questions only one pipeline answered right:
 
 ## Findings so far
 
-- **Refusals are a tie, not a KB win.** Ours shows 5/6 locally only because of q44.
+- **Refusals are a tie, not a KB win.** Ours showed 5/6 locally only because of q44.
   - In the local run `gen_prefix_k10` (2026-10-14), Nova Lite refused in other words ("Sorry, I cannot provide
     information about the unit price ... as it is not mentioned"). `is_not_contained` only knows the fixed sentence,
     so it counted that as an answer (the known reworded-refusal limit).
   - The same setup refused q44 with the fixed sentence in both deployed passes (6/6), and so did every other Layer 7
     setup.
+  - **Update 2026-10-24:** `is_not_contained` now also detects a refusal in other words when the answer cites nothing (a missing-information phrase plus a reference to the datasheets or passages). `scripts/rescore_refusals.py` re-checked all saved answers: only `gen_prefix_k10` q44 changed, so that run is now 6/6 unanswerable refused and its citation hit is unchanged.
 
 - **Ours retrieves better.** R@5 is 0.977 against 0.860, and the gap is in table lookups (1.000 against 0.864) and
   comparisons (1.000 against 0.600).
@@ -92,7 +93,7 @@ Questions only one pipeline answered right:
 | Citation hit | 0.930 | 0.837 |
 | Answerable refused | 0.047 (2) | 0.093 (4) |
 | Unanswerable refused | 1.000 (6/6) | 1.000 (6/6) |
-| Same as the local run | 46/49 | 43/49 |
+| Same as the local run | 47/49 (46/49 before the 2026-10-24 re-score) | 43/49 |
 | Client time p50 / p90 / max | 1,088 / 1,331 / 3,818 ms | 1,662 / 2,134 / 6,184 ms |
 | Lambda time p50 | 911 ms | 1,420 ms |
 | Retrieval p50 | search 30 + rerank 259 ms | Retrieve 970 ms |
@@ -109,7 +110,7 @@ Questions only one pipeline answered right:
     CloudFront and the client and is not explained.
   - q49 was asked afterwards. The human uploaded the code review's zip and raised `KB_DAILY_ASK_LIMIT` to 53 for
     it; 200 in 1.8 s, a correct refusal.
-- **Repeatability.** 43 of 49 answers cite the same pages as the local run (ours: 46 of 49), so Nova Lite's run-to-run
+- **Repeatability.** 43 of 49 answers cite the same pages as the local run (ours: 47 of 49), so Nova Lite's run-to-run
   variation is larger on the KB's passages. The deployed citation hit is the same as the local one (0.837).
 - **Speed.** The KB is about 0.6 s slower per question, almost all of it in `Retrieve` (about 1 s, against 0.3 s
   for our search and Cohere rerank).

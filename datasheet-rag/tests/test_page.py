@@ -58,3 +58,9 @@ def test_pipeline_toggle_offers_ours_and_the_knowledge_base():
     found = re.findall(r'data-pipeline="(\w+)"', page_text())
     assert tuple(found) == config.PIPELINES
     assert 'data-pipeline="ours" aria-pressed="true"' in page_text()  # ours is the default
+
+
+def test_the_page_knows_the_fixed_refusal_sentence():
+    # The page shows a refusal in the model's own words under its notice, and needs the fixed sentence to tell them
+    # apart.
+    assert f'const NOT_CONTAINED = "{config.NOT_CONTAINED}";' in page_text()
