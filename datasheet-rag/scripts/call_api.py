@@ -3,6 +3,7 @@
 Run from datasheet-rag, with API_URL (the invoke URL, no trailing path) in .env or the environment. With
 --base site, every command goes to SITE_URL instead (the CloudFront address, which passes /api/* on to the API):
     python scripts\\call_api.py ask "What is ...?" --yes       paid: about $0.0023 new, $0.0003 cached
+    python scripts\\call_api.py ask "..." --pipeline kb --yes  paid: the Knowledge Base pipeline, about $0.0012
     python scripts\\call_api.py limits                         free: refused requests, none of which may wake Aurora
     python scripts\\call_api.py throttle --route ask --count 6 free: empty questions at once (Lambda answers 400)
     python scripts\\call_api.py usage                          free: today's count of the daily cap, read from DynamoDB
@@ -61,8 +62,11 @@ def show(status: int, text: str, seconds: float) -> None:
         print(text)
 
 
-def ask_body(question: str, document: str | None = None) -> bytes:
-    return json.dumps({"question": question, "document": document}).encode()
+def ask_body(question: str, document: str | None = None, pipeline: str | None = None) -> bytes:
+    body = {"question": question, "document": document}
+    if pipeline:
+        body["pipeline"] = pipeline
+    return json.dumps(body).encode()
 
 
 def cmd_limits() -> None:
@@ -71,6 +75,8 @@ def cmd_limits() -> None:
         ("removed route GET /api/documents", "GET", "/api/documents", None, {}),
         ("empty question", "POST", "/api/ask", ask_body(""), JSON),
         ("unknown datasheet", "POST", "/api/ask", ask_body("What is the supply voltage?", "lm358"), JSON),
+        ("unknown pipeline", "POST", "/api/ask", ask_body("What is the supply voltage?", None, "bedrock"), JSON),
+        ("empty question on the KB pipeline", "POST", "/api/ask", ask_body("", None, "kb"), JSON),
         ("wrong method GET /api/ask", "GET", "/api/ask", None, {}),
         (f"question of {config.API_MAX_QUESTION_CHARS + 1} characters", "POST", "/api/ask",
          ask_body("x" * (config.API_MAX_QUESTION_CHARS + 1)), JSON),
@@ -129,6 +135,7 @@ def main(argv: list[str]) -> None:
     ask = sub.add_parser("ask")
     ask.add_argument("question")
     ask.add_argument("--document", choices=list(config.DOCUMENTS))
+    ask.add_argument("--pipeline", choices=list(config.PIPELINES), default="ours")
     ask.add_argument("--yes", action="store_true", help="make the paid calls without stopping first")
     sub.add_parser("limits")
     throttle = sub.add_parser("throttle")
@@ -143,9 +150,10 @@ def main(argv: list[str]) -> None:
 
     if args.command == "ask":
         if not args.yes:
-            sys.exit("This makes paid Bedrock calls: about $0.0023 for a new question, $0.0003 for a cached one. "
-                     "Run again with --yes.")
-        status, _, text, seconds = call("POST", "/api/ask", ask_body(args.question, args.document), JSON)
+            sys.exit("This makes paid Bedrock calls: about $0.0023 for a new question, $0.0003 for a cached one, "
+                     "$0.0012 on the Knowledge Base pipeline. Run again with --yes.")
+        status, _, text, seconds = call("POST", "/api/ask", ask_body(args.question, args.document, args.pipeline),
+                                        JSON)
         show(status, text, seconds)
     elif args.command == "limits":
         cmd_limits()
@@ -154,7 +162,8 @@ def main(argv: list[str]) -> None:
     elif args.command == "page":
         cmd_page()
     else:
-        print(f"Questions counted today (UTC): {usage.count('asks')} of {config.DEPLOYED_DAILY_LIMIT}")
+        print(f"Questions counted today (UTC): {usage.count('asks')} of {config.DEPLOYED_DAILY_LIMIT} (ours), "
+              f"{usage.count('kb_asks')} of {config.DEPLOYED_KB_DAILY_LIMIT} (Knowledge Base)")
 
 
 if __name__ == "__main__":

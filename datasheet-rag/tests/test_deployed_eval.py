@@ -63,7 +63,7 @@ def test_send_reads_status_headers_and_json():
     result = de.send("https://site", "Q?", opener=opener)
     assert result["status"] == 200 and result["body"]["answer"] == "35 V [1]"
     assert result["headers"]["x-cache"] == "Miss from cloudfront"
-    assert json.loads(seen["body"]) == {"question": "Q?", "document": None}
+    assert json.loads(seen["body"]) == {"question": "Q?", "document": None, "pipeline": "ours"}
     assert seen["type"] == "application/json" and seen["timeout"] == config.DEPLOYED_TIMEOUT_S
 
 
@@ -221,7 +221,7 @@ def test_plan_never_pays(monkeypatch):
     monkeypatch.setattr(de.search, "search", fake_search)
     monkeypatch.setattr(de.rerank, "calls_needed", lambda conn, text, hits: 1 if text == "Old uncached?" else 0)
     monkeypatch.setattr(de.usage, "count", lambda kind: 7)
-    monkeypatch.setattr(de, "_local_tokens", lambda: (5000.0, 50.0))
+    monkeypatch.setattr(de, "_local_tokens", lambda reference=None: (5000.0, 50.0))
     qs = [{**QUESTION, "question": text} for text in ("New?", "Old uncached?", "Old cached?")]
     plan = de.plan_pass(object(), qs)
     assert plan["embed_calls"] == 1 and plan["rerank_calls"] == 2 and plan["generate_calls"] == 3
@@ -397,3 +397,55 @@ def test_summarise_spreads_aurora_over_every_question(tmp_path, monkeypatch):
     assert rows[0]["citation_hit_rate"] == 1.0 and rows[0]["client_ms_p50"] is None
     assert rows[1]["same_as_local"] == "1/1" and rows[2]["questions"] == 3
     assert rows[1]["aurora_usd_per_query"] == pytest.approx(0.5 * config.AURORA_USD_PER_ACU_HOUR / 4)
+
+
+# --- the Knowledge Base pass (Cycle 2 step 8) -------------------------------------------------------------------
+
+KB_BODY = {**OK_BODY, "timings_ms": {"retrieve": 300.0, "generate": 500.0}, "spent_usd": 0.0012}
+
+
+def test_send_names_the_kb_pipeline():
+    seen = {}
+
+    def opener(request, timeout):
+        seen["body"] = request.data
+        return FakeHTTPResponse(json.dumps(KB_BODY).encode())
+
+    de.send("https://site", "Q?", opener=opener, pipeline="kb")
+    assert json.loads(seen["body"])["pipeline"] == "kb"
+
+
+class PipelineSender(Sender):
+    def __call__(self, url, question, pipeline="ours"):
+        self.sent.append((question, pipeline))
+        return self.responses.pop(0)
+
+
+def test_kb_pass_sends_the_kb_pipeline_and_keeps_retrieve_as_search(tmp_path):
+    sender = PipelineSender(response(200, KB_BODY))
+    de.run_pass("u", [QUESTION], "kb", tmp_path / "kb.csv", sender, lambda s: None, lambda: 0.0, clock_now())
+    assert sender.sent == [(QUESTION["question"], "kb")]
+    [row] = de.latest_rows(tmp_path / "kb.csv")
+    assert row["search_ms"] == "300.0" and row["rerank_ms"] == "" and row["pass"] == "kb"
+
+
+def test_ours_pass_keeps_the_default_pipeline(tmp_path):
+    sender = PipelineSender(response(200, OK_BODY))
+    de.run_pass("u", [QUESTION], "first", tmp_path / "first.csv", sender, lambda s: None, lambda: 0.0, clock_now())
+    assert sender.sent == [(QUESTION["question"], "ours")]
+
+
+def test_kb_log_timings_match_a_kb_row():
+    row = de.result_row(QUESTION, "kb", answered(**KB_BODY))
+    handler = {"timings_ms": {"retrieve": 300.0, "generate": 500.0}}
+    assert de._same_timings({k: str(v) if v is not None else "" for k, v in row.items()}, handler)
+
+
+def test_kb_plan_reads_only_the_kb_counter(monkeypatch):
+    counted = []
+    monkeypatch.setattr(de.usage, "count", lambda kind: counted.append(kind) or 7)
+    monkeypatch.setattr(de.db, "connect", lambda **kw: (_ for _ in ()).throw(AssertionError("must not wake Aurora")))
+    plan = de.plan_kb_pass([QUESTION] * 3)
+    assert counted == ["kb_asks"] and plan["retrieve_calls"] == 3
+    assert plan["cost"]["retrieve"] == 3 * config.KB_USD_PER_RETRIEVE
+    assert plan["daily_left"] == config.DEPLOYED_KB_DAILY_LIMIT - 7

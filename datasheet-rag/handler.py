@@ -126,6 +126,10 @@ def _handle(event, connect, ask, log) -> dict:
     if error:
         return error
 
+    if isinstance(payload, dict):
+        # Logged before the API checks it, so an unknown value is logged as such, never copied in.
+        name = "ours" if payload.get("pipeline") is None else payload["pipeline"]  # as api.check_pipeline reads it
+        log["pipeline"] = name if name in config.PIPELINES else "unknown"
     status, data = ask(payload, lambda: _open_conn(connect, log))
     log.update({key: data[key] for key in ("timings_ms", "spent_usd") if key in data})
     return _response(status, data)

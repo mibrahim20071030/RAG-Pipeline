@@ -378,3 +378,148 @@ def test_counter_without_a_table_refuses_with_503(counter):
     opener = Opener()
     status, body = ask({"question": "q"}, fake_answer(), counter, opener)
     assert status == 503 and body["error"] == api.BUSY and opener.opened == 0
+
+
+# ---------------------------------------------------------------- the Knowledge Base pipeline (Cycle 2 step 8)
+
+def kb_result(**fields) -> dict:
+    """What kb.answer_question returns: as `result`, with the KB's timings and a passage id from AWS."""
+    base = result(timings_ms={"retrieve": 300.0, "generate": 900.0},
+                  sources=[{"label": 1, "id": "chunk-a", "document": "lm35", "page": 4, "page_label": None}],
+                  passages=[{"id": "chunk-a", "document": "lm35", "page": 4, "text": "Supply voltage: 35 V"}])
+    return {**base, **fields}
+
+
+def fake_kb(returned=None, raises=None, seen=None):
+    def answer(question, document=None):
+        if seen is not None:
+            seen.update(question=question, document=document)
+        if raises:
+            raise raises
+        return returned or kb_result()
+    return answer
+
+
+class KindCounter:
+    """rag.usage in memory, per kind."""
+
+    def __init__(self):
+        self.counts, self.taken = {}, []
+
+    def take(self, kind, limit, day=None):
+        self.taken.append(kind)
+        if self.counts.get(kind, 0) >= limit:
+            return None
+        self.counts[kind] = self.counts.get(kind, 0) + 1
+        return self.counts[kind]
+
+    def release(self, kind, day=None):
+        self.counts[kind] = max(0, self.counts.get(kind, 0) - 1)
+
+
+def ask_kb(payload, kb_fn, counter=None, opener=None):
+    opener = opener or Opener()
+    status, body = api.ask(payload, opener, fake_answer(raises=AssertionError("ours must not run")), counter, kb_fn)
+    assert opener.opened == 0  # the Knowledge Base pipeline never opens a database connection
+    return status, body
+
+
+def test_kb_answer_shape():
+    seen = {}
+    status, body = ask_kb({"question": " q ", "document": "lm35", "pipeline": "kb"}, fake_kb(seen=seen))
+    assert status == 200 and seen == {"question": "q", "document": "lm35"}
+    assert body["setup"]["pipeline"] == "kb" and body["timings_ms"] == {"retrieve": 300.0, "generate": 900.0}
+    assert body["sources"][0]["pdf_url"] == "/pdfs/lm35.pdf#page=4"  # the local copy, on this machine
+    assert body["answer_parts"] == [{"text": "35 V "}, {"text": "[1]", "labels": [1]}, {"text": "."}]
+    assert body["warnings"] == []
+
+
+def test_kb_deployed_links_to_the_vendor(monkeypatch):
+    monkeypatch.setattr(config, "DEPLOYED", True)
+    _, body = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb())
+    assert body["sources"][0]["pdf_url"] == "https://vendor.example/lm35.pdf#page=4"
+
+
+def test_ours_is_the_default_and_names_itself():
+    status, body = ask({"question": "q"}, fake_answer())
+    assert status == 200 and body["setup"]["pipeline"] == "ours"
+    status, body = ask({"question": "q", "pipeline": "ours"}, fake_answer())
+    assert status == 200 and body["setup"]["pipeline"] == "ours"
+
+
+@pytest.mark.parametrize("name", ["KB", "bedrock", 3, ["kb"]])
+def test_unknown_pipeline_is_400_before_anything_runs(name, monkeypatch):
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 2)
+    counter = KindCounter()
+    status, body = ask_kb({"question": "q", "pipeline": name}, fake_kb(raises=AssertionError("must not run")),
+                          counter)
+    assert status == 400 and "pipeline" in body["error"] and counter.taken == []
+
+
+def test_kb_counts_on_its_own_cap(monkeypatch):
+    monkeypatch.setattr(config, "API_DAILY_ASK_LIMIT", 5)
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 1)
+    counter = KindCounter()
+    assert ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(), counter)[0] == 200
+    status, body = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(), counter)
+    assert status == 429 and body["limit"] == "daily"
+    assert ask({"question": "q"}, fake_answer(), counter)[0] == 200  # ours still has places
+    assert counter.counts == {"kb_asks": 1, "asks": 1}
+
+
+def test_kb_throttle_gives_the_place_back(monkeypatch):
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 2)
+    counter = KindCounter()
+    throttled = ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "Retrieve")
+    status, _ = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(raises=throttled), counter)
+    assert status == 429 and counter.counts["kb_asks"] == 0
+
+
+@pytest.mark.parametrize("error, status", [
+    (ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "Retrieve"), 502),
+    (RuntimeError("KB_ID is not set"), 502),
+])
+def test_kb_failures(error, status):
+    assert ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(raises=error))[0] == status
+
+
+def test_kb_warnings_reach_the_page():
+    unpaged = kb_result(passages=[{"id": "x", "document": "lm35", "page": None, "text": "t"}], sources=[],
+                        answer="No idea.")
+    _, body = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(unpaged))
+    assert any("without a datasheet or page" in w for w in body["warnings"])
+
+
+def test_kb_source_without_a_page_links_the_datasheet_not_a_page():
+    unpaged = kb_result(sources=[{"label": 1, "id": "x", "document": "lm35", "page": None, "page_label": None}])
+    _, body = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(unpaged))
+    assert body["sources"][0]["pdf_url"] == "/pdfs/lm35.pdf" and body["sources"][0]["title"].endswith("page unknown")
+
+
+@pytest.mark.parametrize("name", [False, 0, "", {}])
+def test_a_falsy_pipeline_is_refused_not_read_as_ours(name):
+    assert ask({"question": "q", "pipeline": name}, fake_answer(raises=AssertionError("must not run")))[0] == 400
+
+
+def paid_kb(raises):
+    """A KB answer that pays for a Retrieve (one cost row) and then fails."""
+    def answer(question, document=None):
+        from rag import costlog
+        costlog.log_cost("kb_retrieve", "bedrock-managed-kb", "query", 1, config.KB_USD_PER_RETRIEVE)
+        raise raises
+    return answer
+
+
+def test_kb_place_is_kept_when_something_was_paid(monkeypatch):
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 2)
+    counter = KindCounter()
+    throttled = ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "Converse")
+    status, _ = ask_kb({"question": "q", "pipeline": "kb"}, paid_kb(throttled), counter)
+    assert status == 429 and counter.counts["kb_asks"] == 1  # the Retrieve was paid, so the place stays
+
+
+def test_kb_place_goes_back_when_nothing_was_paid(monkeypatch):
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 2)
+    counter = KindCounter()
+    status, _ = ask_kb({"question": "q", "pipeline": "kb"}, fake_kb(raises=RuntimeError("KB_ID is not set")), counter)
+    assert status == 502 and counter.counts["kb_asks"] == 0

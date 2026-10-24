@@ -1,5 +1,6 @@
 """Cycle 2 step 6 tests for web/index.html: the datasheet list is written into the page (so loading it never wakes
 the paused database) and must stay equal to config.DOCUMENTS. No network and no database."""
+import re
 from html.parser import HTMLParser
 
 from rag import config
@@ -50,3 +51,10 @@ def test_datasheets_in_the_page_match_the_config():
 
 def test_loading_the_page_does_not_ask_the_api_for_the_list():
     assert "/api/documents" not in page_text()
+
+
+def test_pipeline_toggle_offers_ours_and_the_knowledge_base():
+    # Cycle 2 step 8: the two values must be config.PIPELINES, the names api.check_pipeline accepts.
+    found = re.findall(r'data-pipeline="(\w+)"', page_text())
+    assert tuple(found) == config.PIPELINES
+    assert 'data-pipeline="ours" aria-pressed="true"' in page_text()  # ours is the default

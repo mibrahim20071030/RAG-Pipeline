@@ -72,6 +72,11 @@ select { appearance: none; max-width: 100%; height: 38px; padding: 0 34px 0 12px
 select:hover { border-color: var(--border); }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .select-wrap .icon { position: absolute; right: 10px; top: 50%; translate: 0 -50%; pointer-events: none; color: var(--text-muted); width: 16px; height: 16px; }
+.pipeline { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-soft); border-radius: 10px; }
+.pipeline button { height: 32px; padding: 0 12px; font-size: 14px; font-weight: 500; color: var(--text-muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.pipeline button:hover { color: var(--text); }
+.pipeline button[aria-pressed="true"] { color: var(--text); background: var(--surface); box-shadow: var(--shadow); }
+.pipeline button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .count { margin-left: auto; font-size: 13px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 20px; font-weight: 600; font-size: 15px; color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; transition: background-color 150ms; }
 .btn:hover { background: var(--accent-hover); }
@@ -218,6 +223,12 @@ details.details summary:hover { color: var(--text-muted); }
               </select>
               <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
             </div>
+            <!-- Which pipeline answers: ours (hybrid search and Cohere reranking over Aurora) or the Managed Knowledge
+                 Base (AWS's parsing, chunking, search and reranking). Both use the same answer step. -->
+            <div class="pipeline" id="pipeline" role="group" aria-label="Pipeline">
+              <button type="button" data-pipeline="ours" aria-pressed="true">Ours</button>
+              <button type="button" data-pipeline="kb" aria-pressed="false">Knowledge Base</button>
+            </div>
             <span class="count" id="char-count" aria-live="off">0 / 500</span>
             <button class="btn" type="submit" id="ask-button">
               <span>Ask</span><svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg>
@@ -253,6 +264,7 @@ details.details summary:hover { color: var(--text-muted); }
   const box = document.getElementById("question");
   const searchBox = document.getElementById("search-box");
   const select = document.getElementById("document");
+  const pipelineButtons = [...document.querySelectorAll("#pipeline button")];
   const button = document.getElementById("ask-button");
   const error = document.getElementById("question-error");
   const count = document.getElementById("char-count");
@@ -316,11 +328,18 @@ details.details summary:hover { color: var(--text-muted); }
       form.requestSubmit();
     });
   }
+  function pipeline() {
+    return pipelineButtons.find((b) => b.getAttribute("aria-pressed") === "true").dataset.pipeline;
+  }
+  function setPipeline(name) {
+    for (const b of pipelineButtons) b.setAttribute("aria-pressed", String(b.dataset.pipeline === name));
+  }
+  for (const b of pipelineButtons) b.addEventListener("click", () => setPipeline(b.dataset.pipeline));
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const question = box.value.trim();
     if (!question) { setError("Type a question first."); box.focus(); return; }
-    ask({ question, document: select.value || null });
+    ask({ question, document: select.value || null, pipeline: pipeline() });
   });
 
   // ---------- errors ----------
@@ -340,11 +359,12 @@ details.details summary:hover { color: var(--text-muted); }
   }
 
   // ---------- asking ----------
-  // The question is kept in the address (?q=...&doc=...), so it can be shared or reloaded. Opening such a link only
+  // The question is kept in the address (?q=...&doc=...&p=kb), so it can be shared or reloaded. Opening such a link only
   // fills the form: asking costs money, so it always waits for the Ask button.
   function rememberInUrl(payload) {
     const params = new URLSearchParams({ q: payload.question });
     if (payload.document) params.set("doc", payload.document);
+    if (payload.pipeline === "kb") params.set("p", "kb");
     history.replaceState(null, "", `?${params}`);
   }
 
@@ -450,9 +470,10 @@ details.details summary:hover { color: var(--text-muted); }
       el("div", { class: "notice notice-warn", role: "note" }, icon("alert"), el("span", { text: w })));
 
     const t = data.timings_ms || {};
-    const total = ["search", "rerank", "generate"].reduce((sum, k) => sum + (t[k] || 0), 0);
+    const total = Object.values(t).reduce((sum, ms) => sum + (ms || 0), 0);
     const details = el("details", { class: "details" }, el("summary", { text: "Response details" }),
       el("div", { class: "details-grid" },
+        data.setup ? el("span", {}, "Pipeline ", el("b", { text: data.setup.pipeline === "kb" ? "Knowledge Base" : "Ours" })) : null,
         el("span", {}, "Time ", el("b", { text: total ? `${(total / 1000).toFixed(1)} s` : "–" })),
         el("span", {}, "Cost ", el("b", { text: data.spent_usd === null || data.spent_usd === undefined ? "n/a" : `$${data.spent_usd.toFixed(4)}` })),
         data.setup ? el("span", {}, "Passages read ", el("b", { text: String(data.setup.passages) })) : null,
@@ -492,6 +513,7 @@ details.details summary:hover { color: var(--text-muted); }
     updateCount();
     const doc = params.get("doc");
     if (doc && [...select.options].some((option) => option.value === doc)) select.value = doc;
+    if (params.get("p") === "kb") setPipeline("kb");
     button.focus();
   }
 

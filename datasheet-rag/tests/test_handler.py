@@ -334,3 +334,25 @@ def test_lambda_settings_come_from_the_environment(tmp_path):
                          check=True).stdout.strip()
     assert out.split("|") == [str(tmp_path / "cost_log.csv"), "2", "0.0", "22", "1", "3.0", "5.0", "20.0", "True",
                               "False", "datasheet-rag-usage", "50"]
+
+
+def test_kb_ask_never_connects_and_logs_its_pipeline(capped, capsys, monkeypatch):
+    # Cycle 2 step 8: the Knowledge Base pipeline answers without the database.
+    monkeypatch.setattr(config, "KB_DAILY_ASK_LIMIT", 2)
+
+    def kb_answer(question, document=None):
+        return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
+                "cut_off": False, "timings_ms": {"retrieve": 1.0, "generate": 2.0}}
+
+    capped.ask = lambda payload, open_conn: api.ask(payload, open_conn, None, capped.counter, kb_answer)
+    status, body = parsed(capped.call(v2("POST", "/api/ask", json.dumps({"question": "q", "pipeline": "kb"}))))
+    assert status == 200 and body["setup"]["pipeline"] == "kb"
+    assert capped.conns == []
+    line = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert line["pipeline"] == "kb" and "connect_ms" not in line
+
+
+@pytest.mark.parametrize("name, logged", [("kb", "kb"), (None, "ours"), ("x" * 500, "unknown"), ([1], "unknown")])
+def test_only_a_known_pipeline_name_is_logged(fakes, capsys, name, logged):
+    fakes.call(v2("POST", "/api/ask", json.dumps({"question": "q", "pipeline": name})))
+    assert json.loads(capsys.readouterr().out.splitlines()[-1])["pipeline"] == logged

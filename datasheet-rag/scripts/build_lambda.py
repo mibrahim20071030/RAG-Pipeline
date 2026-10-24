@@ -22,10 +22,10 @@ PYTHON_VERSION = "3.14"  # the Lambda runtime python3.14
 PLATFORMS = ("manylinux2014_x86_64", "manylinux_2_28_x86_64")  # the x86_64 runtime is Amazon Linux 2023, glibc 2.34
 # Packed with the pins of requirements.txt, so Lambda runs the versions the tests ran with.
 PACKAGES = ("psycopg[binary]", "boto3")
-# The modules the query path imports (handler -> api -> pipeline -> search, rerank, generate). Not parse, chunk,
-# load, server or eval: they need pdfplumber or the PDFs, and never run in Lambda.
-RAG_MODULES = ("__init__", "api", "chunk_base", "config", "costlog", "db", "embed", "generate", "pipeline", "rerank",
-               "search", "usage")
+# The modules the query path imports (handler -> api -> pipeline -> search, rerank, generate; api -> kb). Not parse,
+# chunk, load, server or eval: they need pdfplumber or the PDFs, and never run in Lambda.
+RAG_MODULES = ("__init__", "api", "chunk_base", "config", "costlog", "db", "embed", "generate", "kb", "pipeline",
+               "rerank", "search", "usage")
 MAX_ZIP_MB = 50  # the console's direct upload limit
 MAX_UNZIPPED_MB = 250  # Lambda's limit for a .zip package
 
