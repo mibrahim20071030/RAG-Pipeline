@@ -76,7 +76,7 @@ Reranked R@5 / MRR@10 for the chosen chunks (`header_prefix` row in `runs/result
 
 ## Known limits (carried into Cycle 2)
 
-- **Reworded refusal.** Nova Lite once refused in its own words ("Sorry, I cannot provide ...", q44), and `is_not_contained` misses that. It is left as it is (seen once in 72 refusals). Such an answer cites nothing, so the pipeline shows "Sources: none" anyway.
+- **Reworded refusal.** Nova Lite once refused in its own words ("Sorry, I cannot provide ...", q44), and `is_not_contained` misses that. It is left as it is (seen once in 72 refusals). Such an answer cites nothing, so the pipeline shows "Sources: none" anyway. **Update 2026-10-24:** `is_not_contained` now also detects a refusal in other words when the answer cites nothing (a missing-information phrase plus a reference to the datasheets or passages). `scripts/rescore_refusals.py` re-checked all saved answers: only `gen_prefix_k10` q44 changed, so that run is now 6/6 unanswerable refused and its citation hit is unchanged.
 - **Mis-citation.** q22 at k 10 gives the right value but cites the wrong page. The judge cannot see this; only the 7a citation check does.
 - **False refusals** are the main answer failure. A stronger answer model is the untested option.
 - **Keyword tokens.** Postgres keeps `VDD/VBAT` as one token, so `VDD` does not match it. `STM32F205` as an exact word is rare in the text. `-40` is a signed token.

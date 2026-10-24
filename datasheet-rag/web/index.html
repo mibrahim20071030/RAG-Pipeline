@@ -72,6 +72,8 @@ select { appearance: none; max-width: 100%; height: 38px; padding: 0 34px 0 12px
 select:hover { border-color: var(--border); }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .select-wrap .icon { position: absolute; right: 10px; top: 50%; translate: 0 -50%; pointer-events: none; color: var(--text-muted); width: 16px; height: 16px; }
+.pipeline-wrap { display: inline-flex; align-items: center; gap: 8px; }
+.pipeline-label { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .pipeline { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-soft); border-radius: 10px; }
 .pipeline button { height: 32px; padding: 0 12px; font-size: 14px; font-weight: 500; color: var(--text-muted); background: transparent; border: 0; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 .pipeline button:hover { color: var(--text); }
@@ -116,6 +118,7 @@ a.cite:hover { background: var(--accent); border-color: var(--accent); color: #f
 .notice .icon { margin-top: 3px; }
 .answer + .notice, .notice + .notice { margin-top: 16px; }
 .notice-neutral { background: var(--surface-soft); color: var(--text-muted); }
+.refusal-words { margin-top: 12px; font-size: 0.95rem; color: var(--text-muted); }
 .notice-neutral strong { display: block; color: var(--text); font-weight: 600; font-size: 1rem; }
 .notice-warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); }
 .notice-danger { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text); align-items: center; }
@@ -165,6 +168,7 @@ details.details summary:hover { color: var(--text-muted); }
   .count { display: none; }
   .select-wrap { flex: 1; }
   select { width: 100%; }
+  .pipeline-wrap { order: 3; width: 100%; justify-content: space-between; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
@@ -223,11 +227,17 @@ details.details summary:hover { color: var(--text-muted); }
               </select>
               <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
             </div>
-            <!-- Which pipeline answers: ours (hybrid search and Cohere reranking over Aurora) or the Managed Knowledge
-                 Base (AWS's parsing, chunking, search and reranking). Both use the same answer step. -->
-            <div class="pipeline" id="pipeline" role="group" aria-label="Pipeline">
-              <button type="button" data-pipeline="ours" aria-pressed="true">Ours</button>
-              <button type="button" data-pipeline="kb" aria-pressed="false">Knowledge Base</button>
+            <!-- Which pipeline answers: "Custom pipeline" (ours: hybrid search and Cohere reranking over Aurora) or
+                 "AWS managed" (the Managed Knowledge Base: AWS's parsing, chunking, search and reranking). Both use
+                 the same answer step. The API values stay "ours" and "kb". -->
+            <div class="pipeline-wrap">
+              <span class="pipeline-label" id="pipeline-label">Search engine</span>
+              <div class="pipeline" id="pipeline" role="group" aria-labelledby="pipeline-label">
+                <button type="button" data-pipeline="ours" aria-pressed="true"
+                  title="Custom pipeline: our hybrid search and table-aware chunking, reranked by Cohere.">Custom pipeline</button>
+                <button type="button" data-pipeline="kb" aria-pressed="false"
+                  title="AWS managed: Amazon Bedrock Knowledge Base, where AWS parses, searches and ranks.">AWS managed</button>
+              </div>
             </div>
             <span class="count" id="char-count" aria-live="off">0 / 500</span>
             <button class="btn" type="submit" id="ask-button">
@@ -260,6 +270,8 @@ details.details summary:hover { color: var(--text-muted); }
 (() => {
   "use strict";
   const MAX = 500;
+  // config.NOT_CONTAINED (tests/test_page.py keeps them equal). A refusal in other words is shown under the notice.
+  const NOT_CONTAINED = "The provided datasheets do not contain this information.";
   const form = document.getElementById("ask-form");
   const box = document.getElementById("question");
   const searchBox = document.getElementById("search-box");
@@ -461,10 +473,15 @@ details.details summary:hover { color: var(--text-muted); }
 
   function answerPanel(question, data) {
     const cited = new Map(data.sources.map((s) => [s.label, s]));
+    const ownWords = (data.answer || "").trim();
+    const reworded = ownWords && ownWords.replace(/\s+/g, " ").toLowerCase().replace(/[\s.]*(\[[\d,\s\-–]+\][\s.]*)*$/, "")
+      !== NOT_CONTAINED.toLowerCase().replace(/\.$/, "");
     const body = data.not_contained
-      ? el("div", { class: "notice notice-neutral" }, icon("info"),
-          el("div", {}, el("strong", { text: "The datasheets don’t cover this." }),
-            el("div", { text: "No passage answers the question, so no answer is given rather than a guess." })))
+      ? el("div", {},
+          el("div", { class: "notice notice-neutral" }, icon("info"),
+            el("div", {}, el("strong", { text: "The datasheets don’t cover this." }),
+              el("div", { text: "No passage answers the question, so no answer is given rather than a guess." }))),
+          reworded ? el("p", { class: "answer refusal-words", text: `In the model’s words: ${ownWords}` }) : null)
       : answerText(data.answer_parts || [{ text: data.answer }], cited);
     const warnings = (data.warnings || []).map((w) =>
       el("div", { class: "notice notice-warn", role: "note" }, icon("alert"), el("span", { text: w })));
@@ -473,7 +490,7 @@ details.details summary:hover { color: var(--text-muted); }
     const total = Object.values(t).reduce((sum, ms) => sum + (ms || 0), 0);
     const details = el("details", { class: "details" }, el("summary", { text: "Response details" }),
       el("div", { class: "details-grid" },
-        data.setup ? el("span", {}, "Pipeline ", el("b", { text: data.setup.pipeline === "kb" ? "Knowledge Base" : "Ours" })) : null,
+        data.setup ? el("span", {}, "Search engine ", el("b", { text: data.setup.pipeline === "kb" ? "AWS managed" : "Custom pipeline" })) : null,
         el("span", {}, "Time ", el("b", { text: total ? `${(total / 1000).toFixed(1)} s` : "–" })),
         el("span", {}, "Cost ", el("b", { text: data.spent_usd === null || data.spent_usd === undefined ? "n/a" : `$${data.spent_usd.toFixed(4)}` })),
         data.setup ? el("span", {}, "Passages read ", el("b", { text: String(data.setup.passages) })) : null,

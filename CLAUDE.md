@@ -80,7 +80,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Layer 6 changed in 7a:
     - `is_not_contained` also accepts the refusal sentence followed only by labels.
     - The prompt has a rule to read every passage and to refuse without citations. It made no measurable difference.
-    - A reworded refusal ("Sorry, I cannot provide ...") is still missed.
+    - A reworded refusal ("Sorry, I cannot provide ...") was still missed (detected since 2026-10-24, see the
+      refusal-detection fix).
   - Spend: $1.31 in total, $1.20 of it on reranking.
 - Layer 7b: DONE on 2026-10-14 (single agent), merged as PR #8 (`14dd8f1`). Results and the review by hand are in `runs/ragas_review.md`.
   - RAGAS 0.4.3 runs in a second venv, `datasheet-rag/.venv-ragas` on Python 3.13, because its dependency `scikit-network` has no 3.14 build. Pins are in `datasheet-rag/requirements-ragas.txt`. LangChain must stay on 0.3: RAGAS 0.4.3 imports `langchain_community.chat_models.vertexai`, which 0.4 removed. Only `ragas_run` needs that venv; the project, its tests and CI stay on 3.14 (all tests also pass on 3.13).
@@ -108,7 +109,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - An empty search makes `format_answer` print a warning, so it is not mistaken for a real "not contained" answer.
   - `rag/pipeline.py`: `answer_question(conn, question, document=None, embed_fn=None, rerank_client=None, generate_client=None)` returns the `generate` result plus `question`, `passages`, `timings_ms` (`search` includes the question embed, `rerank`, `generate`). `format_answer(result)`. The CLI (`--document` optional) does not ask before paid calls (human's choice); it prints the spend afterwards. A new question costs about $0.0023, a cached one about $0.0003.
   - Checked on 2026-10-14: q01, q18, q29 cite the right page, q47 refused, a new TCTH question answered from page 2. Cycle 1 spend in total: $2.23.
-  - The reworded-refusal miss stays a known limit (human's choice).
+  - The reworded-refusal miss stayed a known limit (human's choice) until the 2026-10-24 refusal-detection fix.
 - Layer 8 merged as PR #9 (`ead7ff3`).
 - Layer 8b: DONE on 2026-10-14 (single agent), merged as PR #10 (`0988c26`). The Windows port fix that came after it was pushed straight to `main`. It adds a local web UI and a README written for recruiters.
   - `rag/api.py`: `ask(conn, payload, answer_fn=None) -> (status, body)` and `documents(conn)`, with no HTTP, so a Cycle 2 handler can call them unchanged.
@@ -189,7 +190,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
       `KB_DIR`, `KB_DAILY_ASK_LIMIT`, `DEPLOYED_KB_DAILY_LIMIT`.
   - Local results (49 questions):
     - KB: R@5 0.860, MRR 0.800, citation hit 0.837, unanswerable refused 6/6, $0.0012 a question.
-    - Ours: R@5 0.977, MRR 0.865, citation hit 0.930, unanswerable refused 5/6, $0.0023 a question.
+    - Ours: R@5 0.977, MRR 0.865, citation hit 0.930, unanswerable refused 6/6 (5/6 before the 2026-10-24
+      re-score), $0.0023 a question.
     - The KB loses on table lookups and comparisons.
   - Deployed checks passed (2026-10-23): unknown `pipeline` 400; a KB ask 200 in 2.5 s with no `connect_ms`.
   - Deployed KB pass: 48 of 49, then the KB cap stopped q49. q49 was asked later (cap raised to 53 by the human),
@@ -201,10 +203,42 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Code review done and recorded (1 of 2); 8 of 10 fixed, 848 tests pass. The fixed zip (22,748,347 bytes) is
     live (uploaded and checked 2026-10-24). The Lambda's `KB_DAILY_ASK_LIMIT` is 53 until set back to 50.
   - Step 8 spend: $0.12.
-- Next: a small refusal-detection fix, recommended on 2026-10-24 and not yet approved:
-  - widen `is_not_contained` to reworded refusals that cite nothing, with tests;
-  - re-score the saved runs for free; no prompt change.
-  Then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Refusal-detection fix: BUILT on 2026-10-24 (single agent, plan approved the same day), waiting for the human's
+  PR and a zip upload. No paid call; the prompt is unchanged.
+  - `generate.is_not_contained` has a third rule: no valid source, plus `_MISSING` plus `_SOURCE_MATERIAL`.
+    - `_MISSING`: cannot provide / be determined, does not contain / mention / specify, not or n't mentioned /
+      specified / provided, no information, ...
+    - `_SOURCE_MATERIAL`: datasheet(s), passage(s), document(s).
+    - The two patterns share no word: after the review, "provided" was taken out of the source pattern.
+    - `_words` turns a curly apostrophe into a straight one.
+    - A cited answer is never a refusal.
+    - Still missed: a refusal that cites a passage, or wording outside the patterns.
+  - `scripts/rescore_refusals.py` (`--write` to apply) re-checks `runs/eval/*.csv` and `runs/deployed/*.csv` and
+    updates the refusal columns of `runs/results.csv` and `runs/results_deployed.csv`.
+    - Of 493 saved answers, only `gen_prefix_k10` q44 changed: unanswerable refused 0.833 to 1.000, citation hit
+      unchanged.
+    - Older Layer 7 rows of the "sentence, then only labels" kind keep their label pages in `cited`; they were
+      refusals already and are left alone.
+  - Page: a refusal in other words is shown under the "don't cover this" notice ("In the model's words: ..."), so
+    an uncited partial answer is not hidden. The page's `NOT_CONTAINED` constant is kept equal to config by
+    `tests/test_page.py`.
+  - Re-score `--write`:
+    - patches only the refusal columns of `results.csv` (the only ones there that read the flag), keeping the file's
+      header;
+    - rebuilds `results_deployed.csv` with `deployed_eval.summarise`, keeping the hand-read Aurora share.
+    - The rebuild moved `same_as_local` to 47/49 for `first` and 46/49 for `cached` (q44 now agrees).
+  - Tests: 22 new cases in `tests/test_generate.py`, 1 in `tests/test_page.py`, `tests/test_rescore_refusals.py` (8).
+    879 pass.
+  - Code review done and recorded (1 of 2), 8 of 9 fixed. The 9th, the live Lambda still on the old rule, is
+    fixed by the zip upload.
+  - Zip rebuilt (22,748,983 bytes). The page changed too, so it needs an upload and an invalidation.
+  - Toggle renamed at the human's request (2026-10-24):
+    - a visible "Search engine" label, with buttons "Custom pipeline" and "AWS managed", each with a one-line
+      tooltip;
+    - "Response details" uses the same names;
+    - the API values stay `ours` / `kb`;
+    - on a phone the toggle gets its own row.
+- Next: the refusal fix's PR and zip, then step 9a (PDF upload on both), then 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
@@ -316,7 +350,7 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Settings: `DEPLOYED_*`, `LAMBDA_FUNCTION`, `LAMBDA_MEMORY_MB`, and the prices checked on 2026-10-18: `LAMBDA_USD_PER_GB_S` 0.0000166667, `LAMBDA_USD_PER_REQUEST` $0.20 per 1M, `HTTP_API_USD_PER_REQUEST` $1.00 per 1M, `AURORA_USD_PER_ACU_HOUR` 0.12 (Standard; express configuration is not priced separately).
   - Results:
     - 101 asks, all 200, no retries. Spend **$0.1211**: first $0.1071, cached $0.0131, cold $0.0009.
-    - Citation hit 0.930 first and 0.953 cached (local 0.930). The same 2 false refusals (q24, q33). Unanswerable refused 6 of 6 (local 5 of 6, the q44 rewording).
+    - Citation hit 0.930 first and 0.953 cached (local 0.930). The same 2 false refusals (q24, q33). Unanswerable refused 6 of 6 (local 5 of 6, the q44 rewording; 6 of 6 after the 2026-10-24 re-score).
     - Nova Lite is not repeatable at temperature 0: two passes with the same rerank scores differ on q25 and q30.
   - Latency:
     - client p50 1.09 s for a new question (real rerank 259 ms) and 0.83 s for a cached one;

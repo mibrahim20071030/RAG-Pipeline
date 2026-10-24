@@ -52,7 +52,10 @@ Next session (Cycle 2):
 - [x] 2026-10-24: rebuilt zip uploaded (Claude checked it is live); `KB_DAILY_ASK_LIMIT` raised to 53; q49 asked.
 - [ ] Optional: set `KB_DAILY_ASK_LIMIT` back to 50 in the Lambda.
 - [x] 2026-10-24: step 8 PR merged (#20, `0bbe078`).
-- [ ] Decide on the refusal-detection fix (widen `is_not_contained`, re-score saved runs, $0), then step 9a in plan mode.
+- [x] 2026-10-24: step 8 walkthrough PDF written (`AI-Eng Portfolio\P2 Walkthroughs\Step8_Walkthrough.pdf`); read it when convenient.
+- [x] 2026-10-24: refusal-detection fix plan approved and built.
+- [ ] Upload the rebuilt `build\lambda.zip` (22,748,983 bytes) and click Save; upload `web\index.html` to the page bucket and invalidate `/index.html`; open the PR for the refusal fix.
+- [ ] Then step 9a (PDF upload) in plan mode.
 - [x] 2026-10-23: step 7b walkthrough (in the chat).
 - [ ] Walkthrough session 1: Cycle 1 in depth, locally (flow, layers, files, functions, decisions).
 - [ ] Walkthrough session 2: Cycle 2 steps 1 to 7 (code, console setup, AWS services).
@@ -256,6 +259,42 @@ Cycle 2 (deploy, UI, report):
     - Claude recommended a detection-only fix: wider `is_not_contained` plus a free re-score of the saved runs, no
       prompt change, as its own small step before 9a. Not decided yet.
   - Step 8 PR #20 merged (`0bbe078`).
+  - The step 8 walkthrough was written as a PDF at the human's request (9 pages: resources, code, decisions, tests,
+    review, results, interview answers). It is outside the repo, in `AI-Eng Portfolio\P2 Walkthroughs\`, because
+    the secret scan refuses PDFs inside it.
+  - The refusal-detection fix was planned:
+    - wider `is_not_contained` (no valid citation, plus a missing-information phrase that names the
+      datasheets/passages);
+    - `scripts/rescore_refusals.py` for a free re-score;
+    - tests and docs.
+    - A scan of all 493 saved answers found exactly one uncited non-refusal (`gen_prefix_k10` q44).
+    - Plan approved by the human; built the same day (single agent, no paid call).
+  - Refusal-detection fix built:
+    - `generate.is_not_contained` has a third rule (no valid source, plus `_MISSING`, plus `_SOURCE_MATERIAL`).
+    - `scripts/rescore_refusals.py`.
+    - Tests: 15 new cases in `test_generate.py`; `test_rescore_refusals.py` (6). 869 pass.
+  - The first dry run stopped on its own safety check: older Layer 7 rows of the "sentence, then only labels" kind
+    keep their label pages in `cited`. Those were refusals already, so the check now applies only to a row whose
+    flag changes.
+  - Re-score applied (`--write`): only `gen_prefix_k10` q44 changed. Unanswerable refused 0.833 to 1.000; citation
+    hit unchanged; a second run finds nothing.
+  - Docs updated:
+    - `kb_compare.md` (6/6 against 6/6);
+    - dated notes in `eval_review.md`, `cycle1_summary.md`, `deployed_eval.md`;
+    - `CLAUDE.md`.
+  - Code review (1 of 2) done and recorded: 9 findings, 8 fixed.
+    - "provided" sat in both patterns, so "is not provided with short-circuit protection" counted as a refusal;
+      it was removed from the source pattern.
+    - Curly apostrophes, "isn't mentioned" and "cannot be determined" are now matched.
+    - The page shows a reworded refusal's own words under the notice, so an uncited partial answer is not hidden.
+    - The deployed summary is rebuilt with `deployed_eval.summarise`, not patched. `same_as_local` was stale and is
+      now 47/49 (first) and 46/49 (cached).
+    - The re-score reuses `deployed_eval._flag` / `_answer` and keeps each file's own header.
+    - The 9th, the live Lambda on the old rule, is fixed by the zip upload.
+    - 879 tests pass; the docs quoting same-as-local were updated.
+  - Zip rebuilt (22,748,983 bytes); `web/index.html` changed too.
+  - The human asked for a clearer toggle and chose "Search engine: Custom pipeline / AWS managed" with tooltips. The
+    API values are unchanged. Checked in headless Edge at 1280 and 500 px.
 - `.env.example` lists `KB_ID`, and the Lambda's `KB_ID` and `KB_DAILY_ASK_LIMIT`. No bucket name, KB ID or
   account ID is in any repo file (checked).
 - `CLAUDE.md` updated: a step 8 entry in Current status, the design row and step 8 outline now describe the Managed

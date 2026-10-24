@@ -23,7 +23,7 @@ The 49 frozen questions were sent to the live site on 2026-10-18 between 15:46 a
 | Answerable questions refused | 2 (q24, q33) | 2 (q24, q33) | 2 (q24, q33) |
 | Unanswerable questions refused | 5 of 6 | **6 of 6** | **6 of 6** |
 | Invalid labels | 0 | 0 | 0 |
-| Same answer as local (same refusal, or same cited pages) | – | 46/49 | 45/49 |
+| Same answer as local (same refusal, or same cited pages) | – | 46/49 (47/49 after the 2026-10-24 re-score) | 45/49 (46/49 after) |
 
 The questions whose answers differ:
 
@@ -85,7 +85,7 @@ Times are in ms. "Client" is measured on this machine (Toronto, CloudFront PoP Y
 2. **The reranker's real latency is about 260 ms.** Cycle 1 never measured it, because its scores were cached.
 3. **The cold path is about 21 s, inside API Gateway's 30 s limit.** Aurora's resume is 85 % of it. If a resume ever passes the limit, the page shows its "busy or waking up" message, so the visitor knows to ask again.
 4. **CloudWatch needs a moment.** A log read about a minute after the last call missed that call's lines; a second read a few minutes later found them.
-5. **A reworded refusal can go either way between runs** (q44). The known limit from Layer 6 stays.
+5. **A reworded refusal can go either way between runs** (q44). The known limit from Layer 6 stays. **Update 2026-10-24:** `is_not_contained` now also detects a refusal in other words when the answer cites nothing (a missing-information phrase plus a reference to the datasheets or passages). `scripts/rescore_refusals.py` re-checked all saved answers: only `gen_prefix_k10` q44 changed, so that run is now 6/6 unanswerable refused and its citation hit is unchanged.
 6. **Aurora is half of the cost per question at demo traffic:** $0.0019 a question, against $0.0022 for Bedrock on a new one. Its cost depends on how often it wakes, not on how many questions it answers. A visitor who asks one question pays for 5 minutes of Aurora. Pausing at 0 ACU still saves the most: an always-on cluster at 0.5 ACU would cost about $1.44 a day.
 
 7. **Anyone can keep Aurora awake, and the daily cap does not stop it.**

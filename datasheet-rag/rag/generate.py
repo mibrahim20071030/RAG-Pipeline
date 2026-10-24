@@ -167,19 +167,41 @@ def citation_spans(answer: str, chunks: list[dict]) -> list[tuple[int, int, list
 
 
 def _words(text: str) -> str:
-    return " ".join(text.lower().split())
+    """Lower case, single spaces, and a curly apostrophe as a straight one (models write both: "don’t")."""
+    return " ".join(text.lower().replace("’", "'").split())
+
+
+# A refusal in the model's own words (seen from Nova Lite in Layer 7: "Sorry, I cannot provide information about the
+# unit price ... as it is not mentioned in the provided datasheets."). Both must match: a phrase saying something is
+# missing, and a word naming what was read. Either alone is too loose: "does not require calibration" is a fact, and
+# "the datasheet gives 35 V" is an answer. The two share no word, so one phrase can never satisfy both.
+_MISSING = re.compile(
+    r"\b(?:cannot|can't|can not|unable to) (?:be )?(?:provide|find|answer|determine|found|answered|determined)"
+    r"|\b(?:do|does|did)(?: not|n't) (?:contain|mention|specify|include|list|give|provide|state)"
+    r"|(?:\bnot|n't) (?:mentioned|specified|provided|included|listed|stated|given|found|available)\b"
+    r"|\bno (?:information|mention|data|details)\b"
+)
+_SOURCE_MATERIAL = re.compile(r"\b(?:datasheets?|passages?|documents?)\b")
 
 
 def is_not_contained(answer: str, sources: list[dict] | None = None) -> bool:
-    """True when the answer gives the fixed 'not contained' sentence and cites nothing, or is that sentence with
-    only labels after it ("... information. [1] [2]", seen from Nova Lite in Layer 7). Case, spacing and the final
-    full stop do not matter. An answer that also says something else and cites a passage is an answer."""
+    """True when the answer is a refusal:
+
+    - it is the fixed 'not contained' sentence with only labels after it ("... information. [1] [2]", seen from
+      Nova Lite in Layer 7); or
+    - it cites nothing and gives the fixed sentence anywhere; or
+    - it cites nothing and refuses in other words: it says something is missing (`_MISSING`) and refers to the
+      datasheets or passages (`_SOURCE_MATERIAL`).
+
+    Case, spacing and the final full stop do not matter. An answer that cites a passage is an answer, whatever else
+    it says ("the datasheet does not specify a maximum; typical is 0.5 °C [1]")."""
     sentence = _words(config.NOT_CONTAINED).rstrip(".")
     if _words(_LABELS.sub(" ", answer)).rstrip(" .") == sentence:
         return True
     if sources:
         return False
-    return sentence in _words(answer)
+    text = _words(answer)
+    return sentence in text or bool(_MISSING.search(text) and _SOURCE_MATERIAL.search(text))
 
 
 def generate(question: str, chunks: list[dict], client=None) -> dict:
