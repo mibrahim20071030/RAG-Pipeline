@@ -185,7 +185,11 @@ This session ran past midnight (UTC and local), so its first half is logged unde
   - `scripts/rescore_refusals.py`;
   - the page shows reworded refusals under the notice.
   - Only q44 changed of 493 saved answers.
-- **Toggle renamed** at the human's request: "Search engine: Custom pipeline / AWS managed", with tooltips.
+- **Toggle renamed** at the human's request: "Custom pipeline / AWS managed", with tooltips.
+  - A visible "Search engine" label was added, then removed at the human's request; it stays as the group's
+    `aria-label`.
+  - On a phone the two buttons share the row.
+  - Checked in headless Edge.
 - **Step 8 walkthrough** written as a PDF for later reading: `AI-Eng Portfolio\P2 Walkthroughs\Step8_Walkthrough.pdf`.
 
 Problems hit (what, why, fix):

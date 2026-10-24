@@ -234,8 +234,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     fixed by the zip upload.
   - Zip rebuilt (22,748,983 bytes). The page changed too, so it needs an upload and an invalidation.
   - Toggle renamed at the human's request (2026-10-24):
-    - a visible "Search engine" label, with buttons "Custom pipeline" and "AWS managed", each with a one-line
-      tooltip;
+    - buttons "Custom pipeline" and "AWS managed", each with a one-line tooltip. The visible "Search engine"
+      label was removed at the human's request; it stays as the group's `aria-label` for screen readers;
     - "Response details" uses the same names;
     - the API values stay `ours` / `kb`;
     - on a phone the toggle gets its own row.
