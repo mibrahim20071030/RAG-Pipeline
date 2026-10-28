@@ -55,7 +55,9 @@ Next session (Cycle 2):
 - [x] 2026-10-28: step 9c plan approved.
 - [x] 2026-10-28: both caps raised to 60 for the 9c runs; Parts B and C run.
 - [x] 2026-10-28: the "context" fix zip uploaded and both caps back to 50 (checked).
-- [ ] Step 9c PR: branch, commit, PR, merge.
+- [x] 2026-10-28: step 9c PR merged (#24, `6f5852b`).
+- [ ] Read `walkthroughs/Step9c_Walkthrough.pdf` when convenient.
+- [ ] Optional: delete the branch `cycle-2.9c` (its extra commit `21a8856` is re-applied on `main`).
 - [x] 2026-10-28 (done above): choose how the KB side matches notes (`datasheet-rag/runs/feedback_eval.md`, "Decision pending"); then set the 0.70 threshold in the Lambda and run the "after" eval (about $0.07).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [x] 2026-10-23: cost risk decided: fixes 1 to 5 (step 7b in `CLAUDE.md`).
@@ -320,7 +322,15 @@ Cycle 2 (deploy, UI, report):
   (22,831,264 bytes) for the human to upload; the page reads `not_contained` from the API, so it needs no change.
 - The human uploaded the zip and set both caps back to 50; Claude checked both (code 22,831,264 bytes; caps 50 / 50).
 - Write-up: `datasheet-rag/runs/retest_9c.md`; `CLAUDE.md` marks 9c done. 9c spend about $0.08.
-- Still open: the chat walkthrough of 9c; the human's PR; then step 10 in plan mode.
+- 9c walkthrough given in the chat, then written as a PDF at the human's request:
+  `walkthroughs/Step9c_Walkthrough.pdf`, 5 pages (why, parts A to C, how to read them, privacy and u4, tools,
+  problems, spend, how to explain it). Built with ReportLab in a scratch venv, like 9b.
+- Step 9c merged by the human as PR #24 (`6f5852b`).
+- Problem: Claude edited `progress.md` while the human was making the 9c PR, so that edit went into a second
+  branch commit (`21a8856`) that the merge did not include; nothing else was lost. Why: a tracked file was changed
+  after the step had been handed over. Fix: the note was re-applied on `main`; from now on, no tracked file is
+  changed between handing a step over and the human saying it is merged.
+- Still open: step 10 (the report) in plan mode when the human says so.
 
 ## 2026-10-24 — Session 25: Cycle 2 step 9b (feedback loop) planned and built, waiting for the console work
 

@@ -315,8 +315,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     the note retracted, as before it. Step 9b spend about $0.18.
 - Permanent uploads were considered on 2026-10-28 and skipped (the human's choice): uploads stay private and are
   deleted after 24 h.
-- Cycle 2 step 9c (both tested again): DONE on 2026-10-28 (single agent), waiting for the human's PR. Results in
-  `datasheet-rag/runs/retest_9c.md`; spend about $0.08.
+- Cycle 2 step 9c (both tested again): DONE on 2026-10-28 (single agent), merged as PR #24 (`6f5852b`). Results in
+  `datasheet-rag/runs/retest_9c.md`; walkthrough `walkthroughs/Step9c_Walkthrough.pdf`; spend about $0.08.
   - A (free): only q08, q24, q33 and their cases reach 0.70 (q29 next at 0.605).
   - B, the 49 on the site with notes on (`deployed_eval` passes `notes`, `kb_notes`): 49/49 on both; notes given
     only to q08, q24, q33 on both; citation hit ours 0.977 (cached 0.953), KB 0.884 (step 8 0.837); answerable
