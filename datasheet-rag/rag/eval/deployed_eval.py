@@ -275,12 +275,28 @@ def plan_pass(conn, questions_: list[dict]) -> dict:
             "daily_left": config.DEPLOYED_DAILY_LIMIT - used}
 
 
+def notes_embed_on() -> bool:
+    """Whether a KB answer also embeds its question to match the reviewers' notes (step 9b): some note is published.
+    When the list cannot be read, it is counted, so the estimate is never too low."""
+    from rag import corrections, records
+
+    try:
+        return bool(corrections.published_ids(records.default_store()))
+    except Exception:  # noqa: BLE001 (any failure to read: count the calls)
+        return True
+
+
 def plan_kb_pass(questions_: list[dict]) -> dict:
-    """What the KB pass would pay for: one Retrieve and one answer per question. Reads nothing from Aurora."""
+    """What the KB pass would pay for: one Retrieve and one answer per question, plus a Titan embed of the question
+    while a reviewer's note is published. Reads nothing from Aurora."""
     used = usage.count("kb_asks")
-    cost = {"retrieve": len(questions_) * config.KB_USD_PER_RETRIEVE,
+    retrieves = len(questions_)
+    embeds = len(questions_) if notes_embed_on() else 0
+    cost = {"retrieve": retrieves * config.KB_USD_PER_RETRIEVE,
+            "embed": _embed_usd([q["question"] for q in questions_]) if embeds else 0.0,
             "generate": answer_usd(len(questions_), KB_LOCAL_REFERENCE)}
-    return {"questions": len(questions_), "retrieve_calls": len(questions_), "generate_calls": len(questions_),
+    return {"questions": len(questions_), "retrieve_calls": retrieves, "embed_calls": embeds,
+            "generate_calls": len(questions_),
             "cost": cost, "total": sum(cost.values()), "minutes": len(questions_) * config.DEPLOYED_PACE_S / 60,
             "daily_asks": used, "daily_left": config.DEPLOYED_KB_DAILY_LIMIT - used}
 
@@ -289,6 +305,7 @@ def print_kb_plan(plan: dict) -> None:
     cost = plan["cost"]
     print(f"Questions:              {plan['questions']:>4}")
     print(f"Retrieve calls (KB):    {plan['retrieve_calls']:>4}  ${cost['retrieve']:.4f}")
+    print(f"Notes embeds (Titan):   {plan['embed_calls']:>4}  ${cost['embed']:.4f}")
     print(f"Answers (Nova Lite):    {plan['generate_calls']:>4}  ${cost['generate']:.4f}  (local mean tokens)")
     print(f"Estimated cost:         ${plan['total']:.4f}")
     print(f"Estimated time:         {plan['minutes']:.0f} minutes ({config.DEPLOYED_PACE_S} s apart)")

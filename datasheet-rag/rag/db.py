@@ -5,6 +5,7 @@ Every function takes a connection from `connect()`, which reaches the local Dock
 `vector`, and comes back out as the same text, so no extra package is needed.
 """
 import functools
+import json
 import logging
 import time
 from pathlib import Path
@@ -63,6 +64,17 @@ CREATE TABLE IF NOT EXISTS rerank_cache (
     model           TEXT NOT NULL,
     score           DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (question_sha256, text_sha256, model)
+);
+
+-- Reviewers' notes (step 9b), searched on their own, never with the chunks. Only 'published' ones reach an answer.
+CREATE TABLE IF NOT EXISTS corrections (
+    correction_id TEXT PRIMARY KEY,
+    document      TEXT NOT NULL,
+    page          INTEGER NOT NULL,
+    text          TEXT NOT NULL,
+    embedding     vector({dims}) NOT NULL,
+    status        TEXT NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 """
 
@@ -502,6 +514,79 @@ def keyword_chunks(conn: psycopg.Connection, terms: list[str], strategy: str, n:
         query, {"cfg": ts_config, "terms": list(terms), "strategy": strategy, "n": n, "document": document}
     ).fetchall()
     return _hits(rows)
+
+
+# ---------------------------------------------------------------- reviewers' notes (step 9b)
+
+def store_correction(conn: psycopg.Connection, correction_id: str, document: str, page: int, text: str, vector,
+                     status: str) -> None:
+    """Insert a note, or replace it (publishing again after a retract or a failure)."""
+    conn.execute(
+        """
+        INSERT INTO corrections (correction_id, document, page, text, embedding, status)
+        VALUES (%s, %s, %s, %s, %s::vector, %s)
+        ON CONFLICT (correction_id) DO UPDATE SET
+            document = EXCLUDED.document, page = EXCLUDED.page, text = EXCLUDED.text,
+            embedding = EXCLUDED.embedding, status = EXCLUDED.status
+        """,
+        (correction_id, document, page, text, vector_text(vector), status),
+    )
+
+
+def set_correction_status(conn: psycopg.Connection, correction_id: str, status: str) -> bool:
+    """Change a note's status. False when there is no such note."""
+    return conn.execute("UPDATE corrections SET status = %s WHERE correction_id = %s",
+                        (status, correction_id)).rowcount == 1
+
+
+def match_corrections(conn: psycopg.Connection, vector, document: str | None, min_similarity: float, n: int,
+                      statuses: tuple[str, ...] = ("published",)) -> list[dict]:
+    """The notes closest to the vector (cosine similarity at least `min_similarity`), best first, at most n. With a
+    datasheet named, only its notes. Exact search: there are a handful of notes."""
+    rows = conn.execute(
+        """
+        SELECT correction_id, document, page, text, 1 - (embedding <=> %(vector)s::vector) AS similarity
+        FROM corrections
+        WHERE status = ANY(%(statuses)s) AND (%(document)s::text IS NULL OR document = %(document)s)
+          AND 1 - (embedding <=> %(vector)s::vector) >= %(min)s
+        ORDER BY embedding <=> %(vector)s::vector, correction_id
+        LIMIT %(n)s
+        """,
+        {"vector": vector_text(vector), "document": document, "min": min_similarity, "n": n,
+         "statuses": list(statuses)},
+    ).fetchall()
+    return [{"correction_id": row[0], "document": row[1], "page": row[2], "text": row[3], "similarity": float(row[4])}
+            for row in rows]
+
+
+def correction_vectors(conn: psycopg.Connection, ids: list[str]) -> dict[str, list[float]]:
+    """The stored vectors of these notes, by id: what the KB side matches with (rag.corrections)."""
+    rows = conn.execute("SELECT correction_id, embedding::text FROM corrections WHERE correction_id = ANY(%s)",
+                        (list(ids),)).fetchall()
+    return {row[0]: [float(x) for x in json.loads(row[1])] for row in rows}
+
+
+def correction_similarities(conn: psycopg.Connection, vector, statuses: tuple[str, ...] = ("published",)
+                            ) -> dict[str, float]:
+    """Every note's similarity to the vector, for setting the threshold (correction_eval)."""
+    rows = conn.execute(
+        "SELECT correction_id, 1 - (embedding <=> %s::vector) FROM corrections WHERE status = ANY(%s)",
+        (vector_text(vector), list(statuses)),
+    ).fetchall()
+    return {row[0]: float(row[1]) for row in rows}
+
+
+def page_chunks(conn: psycopg.Connection, document: str, page: int, strategy: str) -> list[str]:
+    """The stored text of one page of a curated datasheet, in order: what the reviewer checks a note against."""
+    rows = conn.execute(
+        """
+        SELECT c.text FROM chunks c JOIN documents d ON d.id = c.document_id
+        WHERE d.name = %s AND d.source = 'curated' AND c.page = %s AND c.strategy = %s
+        ORDER BY c.chunk_index
+        """,
+        (document, page, strategy),
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def _test_schema(name: str) -> sql.Identifier:

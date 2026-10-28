@@ -78,3 +78,19 @@ def test_the_page_offers_an_upload_within_the_configured_size():
 def test_the_page_knows_the_upload_document_prefix():
     # "Open page" finds the visitor's own copy from the source's document name.
     assert f'.slice("{config.UPLOAD_PREFIX}".length)' in page_text()
+
+
+def test_feedback_reasons_in_the_page_match_the_config():
+    # Cycle 2 step 9b: the reasons the page offers are the ones api.check_feedback accepts.
+    block = re.search(r"const REASONS = \[(.*?)\];", page_text(), re.DOTALL).group(1)
+    assert tuple(re.findall(r'\["(\w+)", "', block)) == config.FEEDBACK_REASONS
+    assert f"const MAX_COMMENT = {config.FEEDBACK_MAX_COMMENT_CHARS};" in page_text()
+
+
+def test_review_page_datasheets_match_the_config():
+    text = (config.WEB_DIR / "review.html").read_text(encoding="utf-8")
+    block = re.search(r"const DOCUMENTS = \[(.*?)\];", text, re.DOTALL).group(1)
+    found = dict(re.findall(r'\["([^"]+)", "([^"]+)"\]', block))
+    assert found == {name: entry["part"] for name, entry in config.DOCUMENTS.items()}
+    diagnoses = re.search(r"const DIAGNOSIS_TEXT = \{(.*?)\};", text, re.DOTALL).group(1)
+    assert tuple(re.findall(r"^\s*(\w+):", diagnoses, re.MULTILINE)) == config.DIAGNOSES

@@ -167,6 +167,43 @@ UPLOAD_POST_EXPIRES_S = 600
 UPLOAD_LOCK_WAIT_S = UPLOAD_POST_EXPIRES_S + 60
 UPLOAD_LOCK_INGEST_S = 16 * 60
 
+# Human-approved feedback loop (Cycle 2 step 9b). Feedback is a claim, not a fact: only a note that a reviewer wrote,
+# checked against a datasheet page and published reaches the answer model, on both pipelines.
+# Each answer about the curated datasheets gets a record (item answer#<id> in USAGE_TABLE), kept ANSWER_KEEP_DAYS.
+ANSWER_KEEP_DAYS = 30
+# Changes whenever generate's rules change, so a saved answer says which prompt wrote it.
+PROMPT_VERSION = "2026-10-24"
+FEEDBACK_RATINGS = ("up", "down")
+FEEDBACK_REASONS = ("wrong", "incomplete", "wrong_page", "should_have_answered", "other")
+FEEDBACK_MAX_COMMENT_CHARS = 500
+FEEDBACK_KEEP_DAYS = 90  # a rating keeps a copy of its answer, so it outlives the answer record
+# Ratings per UTC day for everyone (kind "feedback"). 0 is off; deployed, a missing variable means 100, not off.
+FEEDBACK_DAILY_LIMIT = int(os.environ.get("FEEDBACK_DAILY_LIMIT") or ("100" if DEPLOYED else "0"))
+# What the reviewer finds. The first two close the item; the other three let the reviewer write a note.
+DIAGNOSES = ("correct", "not_in_datasheets", "retrieval_miss", "misread", "false_refusal")
+DIAGNOSES_CLOSING = ("correct", "not_in_datasheets")
+REVIEW_NOTE_MAX_CHARS = 500
+CORRECTION_MIN_CHARS, CORRECTION_MAX_CHARS = 20, 1000
+# Notes on: matched notes go before the passages. CORRECTIONS_ENABLED=false answers as before step 9b (the eval's
+# "before").
+CORRECTIONS_ENABLED = os.environ.get("CORRECTIONS_ENABLED", "true").strip().lower() != "false"
+CORRECTION_MAX = 2  # notes given to the model at most, best first
+# Closest a question must be to a note, on both pipelines: the cosine similarity of their Titan vectors. 0.70
+# separates every case of data/correction_cases.jsonl from the other 46 questions, by about 0.03 on each side
+# (runs/feedback_eval.md). The KB's own Retrieve scores could not be used: they only rank the notes for one question.
+CORRECTION_MIN_SIMILARITY = float(os.environ.get("CORRECTION_MIN_SIMILARITY") or "0.70")
+# Published notes at most: the KB side reads them all from one DynamoDB item (400 KB), about 6.5 KB a note.
+CORRECTION_MAX_PUBLISHED = 50
+# Reviewer routes (/api/review/...). Deployed, API Gateway's JWT authorizer checks the Cognito token and the handler
+# checks REVIEWER_GROUP in its claims; REVIEW_AUTH=off is for the local server only, which serves 127.0.0.1.
+REVIEW_AUTH = os.environ.get("REVIEW_AUTH", "on" if DEPLOYED else "off").strip().lower() != "off"
+REVIEWER_GROUP = os.environ.get("REVIEWER_GROUP", "reviewers")
+# For the reviewer page's login (managed login, authorization code with PKCE); not secrets.
+COGNITO_DOMAIN = os.environ.get("COGNITO_DOMAIN", "")  # https://<prefix>.auth.us-east-1.amazoncognito.com
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
+CORRECTION_CASES = ROOT / "data" / "correction_cases.jsonl"
+FEEDBACK_EVAL_DIR = RUNS_DIR / "feedback"
+
 # Evaluation (Layer 7). Questions are hand-checked against the PDFs; a source is (document, PDF page).
 QUESTIONS = ROOT / "data" / "questions.jsonl"
 # Frozen at Layer 8: SHA-256 of the question file with line endings as "\n" (Git on Windows checks it out with "\r\n").

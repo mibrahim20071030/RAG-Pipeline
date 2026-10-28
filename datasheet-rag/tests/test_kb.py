@@ -142,7 +142,7 @@ def test_answer_has_the_pipeline_shape():
     assert result["answer"] == "It is 4 V to 30 V [1]."
     assert result["sources"] == [{"label": 1, "id": "chunk-4.0-Suppl", "document": "lm35", "page": 4,
                                   "page_label": None}]
-    assert set(result["timings_ms"]) == {"retrieve", "generate"}
+    assert set(result["timings_ms"]) == {"retrieve", "notes", "generate"}  # notes on, none published
     assert result["passages"][0]["page"] == 4 and not result["not_contained"]
     assert kb.warnings(result) == []
     assert "LM35 (lm35), page 4" in pipeline.format_answer(result, warnings_fn=kb.warnings)

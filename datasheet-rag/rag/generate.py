@@ -28,6 +28,11 @@ a table row or in other words than the question, answer from it.
 6. Only if no passage answers the question, reply with exactly this sentence, with no citation and nothing else:
 """
 
+# Added only when a reviewer's note is among the passages (step 9b), so every other prompt stays as it was.
+_NOTE_RULE = """6. A passage labelled "Verified note" is a reviewer's correction, checked against the datasheet page it names. \
+If it answers the question, answer from it and cite it; where it disagrees with another passage, follow the note.
+7."""
+
 # [3], [1, 3] or [1-3]. A label glued to a word may be a footnote marker copied from a passage (GPIO16[2]).
 _LABELS = re.compile(r"\[\s*(\d+(?:\s*(?:,|-|–)\s*\d+)*)\s*\]")
 _GLUED_WORD = re.compile(r"\w+$")
@@ -44,13 +49,21 @@ def _bedrock():
     return _client
 
 
+def is_note(hit: dict) -> bool:
+    """A reviewer's note (step 9b): a passage of kind "note", or a source that cites one."""
+    return hit.get("kind") == "note" or bool(hit.get("note"))
+
+
 def passage_label(hit: dict) -> str:
-    """Which datasheet and PDF page a passage is from, with the printed page number when it differs."""
+    """Which datasheet and PDF page a passage is from, with the printed page number when it differs. A reviewer's
+    note says so first: "Verified note: LM35 (lm35), page 4"."""
     part = config.DOCUMENTS.get(hit["document"], {}).get("part")
     document = hit["document"] or "unknown datasheet"  # a Knowledge Base passage may come back without one
     if document.startswith(config.UPLOAD_PREFIX):
         part = "Uploaded PDF"  # a visitor's upload (step 9a); its file name is the visitor's, so it is not shown here
     label = f"{part} ({document})" if part else document
+    if is_note(hit):
+        label = "Verified note: " + label
     label += f", page {hit['page'] if hit['page'] is not None else 'unknown'}"
     if hit.get("page_label") and str(hit["page_label"]) != str(hit["page"]):
         label += f", printed page {hit['page_label']}"
@@ -62,15 +75,18 @@ def build_context(chunks: list[dict]) -> str:
     return "\n\n".join(f"[{n}] {passage_label(hit)}\n{hit['text']}" for n, hit in enumerate(chunks, start=1))
 
 
-def system_prompt() -> str:
-    """The rules, with the 'not contained' sentence as config gives it now."""
-    return _RULES + config.NOT_CONTAINED
+def system_prompt(notes: bool = False) -> str:
+    """The rules, with the 'not contained' sentence as config gives it now. With `notes`, the rule on reviewers'
+    notes comes before the last rule; without, the prompt is the same as before step 9b."""
+    rules = _RULES.replace("\n6. ", "\n" + _NOTE_RULE + " ", 1) if notes else _RULES
+    return rules + config.NOT_CONTAINED
 
 
 def build_prompt(question: str, chunks: list[dict]) -> tuple[list[dict], list[dict]]:
     """The Converse `system` and `messages`: the rules, then one user message with the passages and the question."""
     user = f"Passages:\n\n{build_context(chunks)}\n\nQuestion: {question}"
-    return [{"text": system_prompt()}], [{"role": "user", "content": [{"text": user}]}]
+    system = system_prompt(notes=any(is_note(hit) for hit in chunks))
+    return [{"text": system}], [{"role": "user", "content": [{"text": user}]}]
 
 
 def _log(input_tokens: int, output_tokens: int) -> None:
@@ -149,8 +165,11 @@ def resolve_citations(answer: str, chunks: list[dict]) -> dict:
             elif label not in seen:
                 seen.add(label)
                 hit = chunks[label - 1]
-                sources.append({"label": label, "id": hit.get("id"), "document": hit["document"],
-                                "page": hit["page"], "page_label": hit.get("page_label")})
+                source = {"label": label, "id": hit.get("id"), "document": hit["document"], "page": hit["page"],
+                          "page_label": hit.get("page_label")}
+                if is_note(hit):
+                    source["note"] = True
+                sources.append(source)
     return {"sources": sources, "invalid": sorted(invalid)}
 
 

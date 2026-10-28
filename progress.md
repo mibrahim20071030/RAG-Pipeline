@@ -37,6 +37,22 @@ Next session (Cycle 2):
 - [x] 2026-10-18: the three step 7 runs done (101 asks, $0.1211).
 - [x] 2026-10-18: Aurora's `ServerlessDatabaseCapacity` read for 15:00–17:00 UTC (1.619 ACU-hours).
 - [ ] Optional: after a night with no calls, tell Claude so it can run one long-idle cold trial ($0.0003).
+- [x] 2026-10-24: step 9b plan approved (review page with Cognito; notes for q08, q24, q33; no feedback on uploads).
+- [x] 2026-10-24: step 9b console work done (`datasheet-rag/runs/feedback_setup.md`, steps 1 to 10); the free checks passed.
+- [x] 2026-10-24: Docker started; all 1,305 tests ran.
+- [x] 2026-10-24: step 9b paid part approved; q08, q24, q33 asked and rated 👎; reviewer login fixed (callback URL, audience); 3 notes written and published.
+- [x] 2026-10-24: Discard and the new button rules uploaded (zip 22,777,986 bytes, `review.html`).
+- [x] 2026-10-28: chose option 1 (the KB side uses our Titan cosine and the 0.70 line); plan approved, code built.
+- [x] 2026-10-28: Docker started; full checks pass (1,314); review 2 of 2 done, 7 of 10 fixed.
+- [x] 2026-10-28: zip, `CORRECTION_MIN_SIMILARITY=0.7` and `review.html` uploaded (checked live).
+- [x] 2026-10-28: retract fix uploaded, Finish retract clicked, q24 asks approved, note republished, after eval
+  approved and run (all 24 passed).
+- [x] 2026-10-28: console cleanup of the old notes path.
+- [ ] Remove the Lambda variable `CORRECTION_BUCKET` from `datasheet-rag` (unused).
+- [ ] Step 9b PR: branch, commit, PR, merge.
+- [ ] Read `walkthroughs/Step9b_Walkthrough.pdf` when convenient.
+- [ ] Decide how permanent uploads should work (who sees them; limits).
+- [x] 2026-10-28 (done above): choose how the KB side matches notes (`datasheet-rag/runs/feedback_eval.md`, "Decision pending"); then set the 0.70 threshold in the Lambda and run the "after" eval (about $0.07).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [x] 2026-10-23: cost risk decided: fixes 1 to 5 (step 7b in `CLAUDE.md`).
 - [x] 2026-10-23: plan reordered: step 8 full KB pipeline with a toggle on the same page, then both tested; step 9 upload, then feedback, on both, then both tested again.
@@ -167,6 +183,238 @@ Cycle 2 (deploy, UI, report):
 - [ ] 9c. Both pipelines tested again.
 - [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-10-28 — Session 26: step 9b, one note matcher for both pipelines
+
+- Explained at length why the KB's scores cannot decide whether a note fits: a reranker's score only orders
+  passages for one question (its scale moves with the question, so a fit at 0.441 and a non-fit at 0.476 overlap),
+  and with the reranker off the score follows the rank. A RAG search never asks "good enough?", it only fills the
+  top 10; a note needs a yes/no, so it needs the raw cosine. **The human wants this explanation in the step 9b
+  walkthrough.**
+- Decision (the human): option 1. The KB side matches notes with the same Titan cosine and the 0.70 line as ours.
+  Plan: `C:\Users\muham\.claude\plans\temporal-tinkering-rabbit.md` (approved).
+- Built (no paid or cloud call):
+  - `rag/corrections.py`: the published list item `notes#published` now holds each note's text and vector (base64
+    float32, as pgvector stores it); `kb_match` embeds the question once (only when a note could fit) and keeps
+    cosine ≥ `CORRECTION_MIN_SIMILARITY`; publish goes live on both at once (no S3 file, sync or `ingesting`);
+    retract drops the note from the list before touching Aurora; at most `CORRECTION_MAX_PUBLISHED` (50) notes.
+  - `rag/db.py` `correction_vectors`; `rag/kb.py` notes `Retrieve` removed; `rag/config.py` threshold 0.70, the
+    five KB-notes settings removed; `rag/review.py` and `web/review.html` without sync states and polling;
+    `correction_eval` `similarities` without `--kb` (writes `similarities_shared.csv`); `deployed_eval` KB plan
+    counts a Titan embed, not a second Retrieve.
+  - Tests: `tests/test_corrections.py` rewritten for the new flow, plus an equivalence test (pgvector against the
+    Python cosine) and a size test for 50 notes; `tests/test_deployed_eval.py`, `tests/test_kb.py` adjusted.
+    Ruff clean; 1,097 pass, 212 skipped (Docker Desktop was not running).
+- Problem: a KB test started reading the real DynamoDB table. Why: the notes step used to run only when the notes
+  data source was set (unset in tests); now it runs whenever notes are on. Fix: `tests/conftest.py` gives every
+  test an empty in-memory records store.
+- Code review 2 of 2 for step 9b done and recorded (10 findings). Fixed 7:
+  - the list was rebuilt from an eventually consistent Scan, so a just-published note could be missed: now each
+    publish and retract edits the list in place, read with a consistent `get` and written with a version check
+    (`_edit_list`); the item is the new `notes#list` (with a `version`), seeded once from the notes published
+    before; the old `notes#published` is no longer read;
+  - two edits at once could overwrite each other: the version check makes the loser read again;
+  - publish set the record live before the row, so a retract in between, or an error after it, left the sides
+    disagreeing: a failure after the record is live now takes the note out again and marks it failed, and a
+    retract that came in meanwhile is undone after the row and the list are set;
+  - a notes failure (list or embed) failed the whole KB answer after Retrieve was paid: it now answers without
+    notes, as ours does;
+  - the local server's KB answers read DynamoDB, not the server's own notes: `_State.kb_answer` passes them;
+  - the self-check at publish took the top 2 pending notes, so stale pending rows could push a good note out: it
+    now reads this note's own similarity;
+  - leftover `data_source_id` arguments on `kb.start_ingestion` / `ingestion_status` restored to `main`'s.
+  - Not fixed, with reasons: `_result` carried in the API body (an existing design, not a bug); an uncached Titan
+    embed per KB question while notes are published (about 3 asks a minute under the API throttle plus 40 upload
+    embeds stays under the 60 quota); three Scans per Report visit (demo-sized table).
+  - 1,314 tests pass (5 new). `build/lambda.zip` rebuilt (22,819,502 bytes); `ingest.zip` does not need uploading.
+- The human uploaded the zip and `review.html` and set `CORRECTION_MIN_SIMILARITY=0.7`; Claude checked all three
+  live (code 22,819,502 bytes; the served page equals the local file).
+- Bug found by the human at the retract test: retracting the ESP32 p.46 note gave an error, the page still showed
+  it published, and further clicks said "already retracted". Why (CloudWatch): the retract set the record, then
+  Aurora was paused and the connect timed out after 22.2 s (503), so our row stayed "published" (our pipeline still
+  uses the note) and nothing could finish it; the page kept its old view after the error. Fix: a retract whose
+  database does not answer leaves the note out of the KB side with `ours` "retracting" and says so (503); retract
+  again finishes it (`unfinished_retract`, also true for a note retracted by the old code with `ours` "ready");
+  discard finishes it first; the page reloads the note after any error and shows **Finish retract**. 1,316 pass.
+  Zip rebuilt (22,819,901 bytes).
+- The human uploaded the fix and clicked Finish retract: record `ours`/`kb` off, Aurora row retracted. Retract
+  test ($0.0014): q24 on both pipelines through the site refused with no note, as before the note. The human
+  republished it; `notes#list` was created (version 1) with all three notes, vectors equal to Aurora's.
+- The Notes page shows each note's record, not a live check (the human asked; told plainly). The two older notes
+  showed AWS managed "live" before the list existed; the republish made that true. A live list check was offered
+  and declined.
+- "After" eval ($0.0179): both pipelines 3/3 originals, 6/6 paraphrases (each with its own note), 3/3 negatives
+  with no note. Results in `datasheet-rag/runs/feedback_eval.md`.
+- Problem: the after run rewrote `runs/feedback/summary.csv` with its own rows only, losing the before rows. Why:
+  the summary was built from the current run. Fix: `correction_eval.saved_rows` builds it from every saved
+  `<pipeline>_<state>.csv` (1 new test); the file was rebuilt with both states.
+- Step 9b spend about $0.18.
+- Console cleanup done by the human: notes data source and bucket deleted, `rag-feedback` trimmed to the Scan,
+  `KB_CORRECTION_DATA_SOURCE_ID` removed from the Lambda and both lines from `.env`. Checked: `CORRECTION_BUCKET`
+  is still on the Lambda (unused, harmless; to remove). The data source list cannot be read by the dev user.
+- `CLAUDE.md` (9b status, teardown checklist) and `runs/feedback_setup.md` (a "changed on 2026-10-28" note)
+  updated.
+- **Step 9b walkthrough** written as a PDF at the human's request: `walkthroughs/Step9b_Walkthrough.pdf`, 8 pages
+  (what it adds, the flow, AWS pieces, code file by file, matching, why the AWS managed side shares our matcher
+  with the reranker-vs-cosine explanation, keeping the sides in step, safety, tests and reviews, results, snags,
+  known limits, how to explain it). Built with ReportLab in a scratch venv; the folder is in `.git/info/exclude`.
+- Step 9b is ready for the human's PR (files listed in the chat).
+- The human asked to make uploads permanent (today they are deleted after 24 h). Options put to the human; not
+  decided or built yet. It would be its own step, in plan mode, before 9c so 9c tests it.
+- Still open: remove `CORRECTION_BUCKET` from the Lambda; the human's PR; the permanent-uploads decision; 9c.
+
+## 2026-10-24 — Session 25: Cycle 2 step 9b (feedback loop) planned and built, waiting for the console work
+
+**Plan:** `C:\Users\muham\.claude\plans\plan-to-build-9b-effervescent-dream.md`, approved by the human.
+
+**The human's decisions:**
+- **Review page.** Review is on a web page with a Cognito login, not a local CLI.
+- **Demo notes.** They fix the known failures q08 (misread), q24 and q33 (false refusals).
+- **Uploads.** Answers about an upload get no feedback.
+
+**Checked in the docs (`datasheet-rag/runs/feedback_setup.md`):**
+- HTTP API JWT authorizer: it checks `client_id` when a token has no `aud`; claims arrive in
+  `requestContext.authorizer.jwt.claims`.
+- Cognito: Lite and Essentials have 10,000 free monthly active users; `/oauth2/token` allows any origin, so PKCE
+  works from the page.
+- KB: `.txt` and NUMBER sidecar keys are supported.
+
+**Found:** the `datasheets` data source reads the whole KB bucket (no inclusion prefix). So the notes get their own
+bucket and their own data source, `corrections`; in the KB bucket they would have reached the curated search.
+
+**Built:**
+- **Records.** `rag/records.py`: answer, rating and note records in `datasheet-rag-usage`, in a MemoryStore or a
+  DynamoStore.
+- **Notes.** `rag/corrections.py` matches, publishes, verifies and retracts:
+  - our side: a `corrections` table with cosine similarity on the question's cached vector;
+  - the KB side: a second `Retrieve` on the `corrections` data source, used only if the note's record says
+    published.
+- **Reviewer API.** `rag/review.py`. `api.feedback` gives one rating per answer, a daily cap, and never touches
+  Aurora. Every curated 200 answer gets an `answer_id` and is saved for 30 days.
+- **Answer step.**
+  - Notes go before the passages on both pipelines, labelled "Verified note".
+  - The prompt rule on notes is added only when a note is present, so other prompts are unchanged.
+  - A cited note is marked `note: true`.
+- **Routes.** The handler has `POST /api/feedback` and `/api/review/*`, with the reviewer group checked on top of
+  the JWT authorizer. The local server has the same routes, without a login.
+- **Pages.** `web/index.html` has 👍 / 👎 with a reason and an optional comment. `web/review.html` is new: login,
+  queue, diagnosis, page text, note form, publish and retract, report.
+- **Eval.** `data/correction_cases.jsonl` (12 cases) and `rag/eval/correction_eval.py` (`similarities`, `run`).
+- **Tests.** `test_records.py`, `test_feedback.py`, `test_corrections.py` and `test_correction_eval.py`, plus
+  additions to `test_handler.py` and `test_page.py`. 1,088 pass; the database tests skip because Docker Desktop was
+  not running.
+
+**Code review (1 of 2, recorded).** All 9 findings were fixed, each with a test:
+- a one-datasheet KB search now also filters on the curated data source; before, a note's sidecar `document` let
+  it in as an ordinary passage;
+- a retract during the publish sync stays `remove_pending`, and `refresh` retries the removal sync;
+- `refresh` goes live only while the status is still `ingesting`, so a retract that comes in meanwhile wins;
+- the model reads only the reviewer's text. The question (maybe the visitor's own words) is used for matching only;
+- a note is written before its rating is marked `corrected`;
+- the notes `Retrieve` is skipped while no note is published (item `notes#published`);
+- `deployed_eval`'s KB plan counts the notes `Retrieve`;
+- `DynamoStore.update` refuses an expired item;
+- the page route links the stored PDF file.
+
+1,094 tests pass. Both zips are rebuilt (lambda 22,777,448 bytes, ingest 46,476,540).
+
+**Reviewer page redesign (the human's request).** `web/review.html` was rebuilt with the `ui-ux-pro-max` design
+system:
+- Dark slate by default, with a light toggle kept in `localStorage`. Fonts: IBM Plex Sans and JetBrains Mono.
+- A sidebar with counts; the queue as a list beside the open item.
+- One-click diagnosis cards, with keyboard keys `J`/`K` (move) and `1`–`5` (diagnose).
+- Changes show at once and are refreshed in the background; toasts, skeletons, and `#notes` / `#report` links.
+
+Checked with headless Edge on a local demo server with sample records (desktop and 500 px).
+
+1,305 tests pass, with Docker running, so the `corrections` table test ran on Postgres.
+
+The human asked whether user text can become SQL or code: placeholders everywhere, DynamoDB values kept separate
+from expressions, `textContent` on both pages. Prompt injection is limited by what reaches the model.
+
+Cognito offers only Essentials and Plus on this account: keep Essentials. `REVIEW_AUTH` is not set on either
+Lambda.
+
+**Console work done by the human, and checked by Claude (results in `runs/feedback_setup.md`):**
+- Aurora has the `corrections` table (`create_schema`; connect 18.8 s).
+- The Lambda runs the 22,777,448-byte zip, with the four new variables and no `REVIEW_AUTH`.
+- Through the site, every reviewer request without a valid token gets 401 from API Gateway, and none reached the
+  Lambda.
+- Feedback refusals are 400 and 404. No feedback line has `connect_ms`.
+- Both pages are served equal to the local files.
+
+**Paid part, started with the human's yes:**
+- The "before" eval: 12 cases on both pipelines with notes off, $0.0357 (`runs/feedback/*_before.csv`).
+  - Originals passed 0 of 3 on both pipelines. Paraphrases passed 2 of 6 on ours and 1 of 6 on the KB.
+  - Negative controls passed 3 of 3.
+  - q08's answers give only the typical values, and one paraphrase claims the two parts are the same.
+- The human asked q08, q24 and q33 on the site and gave each a 👎. The 3 answers were saved and the 3 ratings
+  accepted ($0.0008).
+- The reviewer login now works, after two console fixes (`runs/feedback_setup.md`, "Login snags"):
+  - the callback URL was not exactly `<SITE_URL>/review.html` (`redirect_mismatch`);
+  - the authorizer's Audience was not the client ID ("the token does not have a valid audience").
+
+  Then the queue showed the 3 items.
+
+**Discard (the human's request).** `POST /api/review/corrections/<id>/discard`, `corrections.discard`:
+- It works on a draft, failed or retracted note; a failed note is retracted first, so its KB file is deleted.
+- The note becomes `discarded` and its rating goes back to the queue as `diagnosed`.
+- A published note must be retracted first.
+- On the page: a two-click **Discard** button.
+
+Why it was needed: the note form started on ESP32 for a refusal that cited nothing, so a note could land on the wrong
+datasheet. The form now starts on "Pick a datasheet…" when nothing was cited, and a draft's sides read
+"not published".
+
+Button rules (the human's request, after publishing all three at once: one ingested, two failed "already syncing",
+and the failed ones showed both Publish and Retract):
+- a draft, failed or retracted note shows **Publish** and **Discard**;
+- a publishing, ingesting or published note shows **Retract** only;
+- **Publish** is greyed out, with a banner, while any note is syncing;
+- a discarded note comes back to the queue filled in (`last_note` on the rating: datasheet, page, text, question);
+- a side that found its question reads "ready, not live" until the note is published.
+
+Checked with headless Edge on the demo server. 1,308 tests pass. `lambda.zip` rebuilt (22,777,986 bytes); the zip
+and `review.html` are waiting for upload.
+
+Found: ST serves its PDF as a download, so "Open the PDF page" does not open at the page for the STM32. "Show page"
+(the stored text) is enough to check a note.
+
+**Notes published, then measured (`datasheet-rag/runs/feedback_eval.md`):**
+- The human wrote the three notes and published them one at a time:
+  - LM35 p.5 (q08);
+  - ESP32 p.46 (q24);
+  - STM32 p.71 (q33).
+
+  The live Lambda (22,777,986 bytes) and `review.html` were checked equal to the build.
+- **`similarities --kb` ($0.061).** Ours separates the notes:
+  - originals score 0.90 to 0.93, paraphrases 0.73 to 0.90;
+  - negatives score at most 0.68, and the other frozen questions at most 0.60 (q29).
+
+  So the threshold should be **0.70**; the 0.6 placeholder would give q29 the STM32 note. Not applied yet.
+- **The KB's managed-reranker scores are flat** (0.37 to 0.50 for every question). Its own question scores no
+  better than a negative, and none reaches 0.5, so the KB uses no note without a datasheet chosen.
+- **Probe with `rerankingModelType: NONE` ($0.061, with the human's yes).** The scores only show the rank: about
+  0.8 for 1st, 0.45 for 2nd, 0.23 for 3rd, whatever the question. **A Managed KB gives no absolute closeness, so
+  no threshold works on its side.**
+
+**Decision pending** (asked; the human paused the session to resume later): how the KB side picks notes.
+1. Recommended: the same Titan matcher and 0.70 line as ours, with the note vector kept in DynamoDB. No Aurora,
+   about $0.00002 a question, and the notes data source is no longer needed.
+2. The KB's top note, only when the visitor picked that datasheet. The negatives would fail.
+3. No notes on the KB side.
+
+**9b spend so far:** about $0.16.
+
+**Open, next session:**
+1. Explain the options again if needed; the human decides.
+2. Build the choice, set `CORRECTION_MIN_SIMILARITY` 0.70 (config and Lambda), redeploy.
+3. Run the "after" eval (about $0.07) and the retract test.
+4. Optionally, the 403 check with a user outside `reviewers`.
+5. Second code review if the KB matching rewrite is large; `CLAUDE.md` final status; the walkthrough; the human's
+   PR.
+
+The work is still uncommitted in the working tree on `main`; the human does the branch, commit and PR.
 
 ## 2026-10-24 — Session 24: Cycle 2 step 9a (PDF upload) planned, built, deployed, checked and merged (#22)
 

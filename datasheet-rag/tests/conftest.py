@@ -5,15 +5,17 @@ import uuid
 import psycopg
 import pytest
 
-from rag import config, db
+from rag import config, db, records
 
 
 @pytest.fixture(autouse=True)
 def no_upload_resources(monkeypatch):
-    """The step 9a resources start unset in every test, whatever datasheet-rag\\.env holds; a test that needs one
-    sets it."""
+    """The step 9a and 9b resources start unset in every test, whatever datasheet-rag\\.env holds; a test that needs one
+    sets it. The records store is an empty one in memory, so nothing (a KB answer reading the published notes, for
+    one) reaches the DynamoDB table."""
     for name in ("KB_CURATED_DATA_SOURCE_ID", "KB_UPLOAD_DATA_SOURCE_ID", "UPLOAD_BUCKET"):
         monkeypatch.setattr(config, name, "")
+    monkeypatch.setattr(records, "default_store", records.MemoryStore)
 
 
 @pytest.fixture(scope="session")

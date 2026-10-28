@@ -14,7 +14,7 @@ import time
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, costlog, db, generate, rerank, search
+from rag import config, corrections, costlog, db, generate, rerank, search
 
 REFUSED = """
 Bedrock refused a call: {error}
@@ -38,6 +38,9 @@ def answer_question(conn, question: str, document: str | None = None, embed_fn=N
     `document` limits the search to one datasheet (None: all). The result is what `generate.generate` returns,
     plus `question`, the `passages` the model was given (in label order) and `timings_ms` per step; the search
     time includes embedding the question when it is not cached.
+
+    With notes on (step 9b, config.CORRECTIONS_ENABLED), the published reviewers' notes closest to the question go
+    before the reranked passages; they reuse the question's vector, so they cost nothing.
     """
     start = time.perf_counter()
     hits = search.search(conn, question, config.SEARCH_MODE, document=document, embed_fn=embed_fn)
@@ -46,13 +49,18 @@ def answer_question(conn, question: str, document: str | None = None, embed_fn=N
     start = time.perf_counter()
     passages = rerank.rerank(conn, question, hits, client=rerank_client)
     rerank_ms = _ms_since(start)
+    timings = {"search": search_ms, "rerank": rerank_ms}
+
+    if config.CORRECTIONS_ENABLED:
+        start = time.perf_counter()
+        passages = corrections.match(conn, question, document, embed_fn=embed_fn) + passages
+        timings["notes"] = _ms_since(start)
 
     start = time.perf_counter()
     result = generate.generate(question, passages, client=generate_client)
-    generate_ms = _ms_since(start)
+    timings["generate"] = _ms_since(start)
 
-    return {"question": question, **result, "passages": passages,
-            "timings_ms": {"search": search_ms, "rerank": rerank_ms, "generate": generate_ms}}
+    return {"question": question, **result, "passages": passages, "timings_ms": timings}
 
 
 def warnings(result: dict) -> list[str]:
