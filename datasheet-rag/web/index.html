@@ -160,6 +160,23 @@ details.details summary:hover { color: var(--text-muted); }
 .source-link .icon { width: 14px; height: 14px; }
 .source-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .sources-empty { margin: 0; font-size: 14px; color: var(--text-muted); }
+.note-badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 2px; font-size: 12px; font-weight: 600; color: #067647; }
+.note-badge .icon { width: 13px; height: 13px; }
+
+/* Step 9b: a visitor rates the answer; a thumbs-down asks what was wrong. */
+.feedback { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 14px; color: var(--text-muted); }
+.feedback-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.feedback-row > span { margin-right: 4px; }
+.feedback .icon-btn { width: 34px; height: 34px; border: 1px solid var(--border); }
+.feedback .icon-btn .icon { width: 16px; height: 16px; }
+.feedback-form { display: grid; gap: 10px; max-width: 460px; margin-top: 12px; }
+.feedback-form textarea { min-height: 72px; padding: 10px 12px; font-size: 14px; background: var(--surface-soft); border-radius: 10px; }
+.feedback-actions { display: flex; gap: 8px; }
+.feedback-actions .btn { height: 36px; padding: 0 16px; font-size: 14px; }
+.feedback-done { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.feedback-done .icon { color: var(--accent); }
+.feedback-error { color: var(--danger-text); }
+.feedback + details.details { margin-top: 16px; }
 
 /* Loading */
 .loading { padding: 28px; max-width: 760px; margin: 0 auto; }
@@ -207,6 +224,9 @@ details.details summary:hover { color: var(--text-muted); }
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
+  <symbol id="i-thumbs-up" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></symbol>
+  <symbol id="i-thumbs-down" viewBox="0 0 24 24"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
   <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
 </svg>
 
@@ -314,6 +334,15 @@ details.details summary:hover { color: var(--text-muted); }
   const MAX = 500;
   // config.NOT_CONTAINED (tests/test_page.py keeps them equal). A refusal in other words is shown under the notice.
   const NOT_CONTAINED = "The provided datasheets do not contain this information.";
+  // config.FEEDBACK_REASONS and FEEDBACK_MAX_COMMENT_CHARS (tests/test_page.py keeps them equal).
+  const REASONS = [
+    ["wrong", "The answer is wrong"],
+    ["incomplete", "Something is missing"],
+    ["wrong_page", "It cites the wrong page"],
+    ["should_have_answered", "It should have answered"],
+    ["other", "Something else"],
+  ];
+  const MAX_COMMENT = 500;
   const form = document.getElementById("ask-form");
   const box = document.getElementById("question");
   const searchBox = document.getElementById("search-box");
@@ -648,6 +677,8 @@ details.details summary:hover { color: var(--text-muted); }
     return el("li", { class: "source", id: `src-${source.label}` },
       el("span", { class: "cite", "aria-hidden": "true", text: String(source.label) }),
       el("div", { class: "source-body" },
+        source.note ? el("div", { class: "note-badge", title: "A reviewer checked this against the page" },
+          icon("shield"), "Verified note") : null,
         el("div", { class: "source-part", translate: "no", text: name }),
         el("div", { class: "source-page", text: `Page ${source.page}${printed}` }),
         href
@@ -685,7 +716,7 @@ details.details summary:hover { color: var(--text-muted); }
     const answerCard = el("article", { class: "card answer-card" },
       el("p", { class: "label", text: "Answer" }),
       el("h2", { class: "question-echo", text: question }),
-      body, warnings, details);
+      body, warnings, data.answer_id ? feedbackRow(data.answer_id) : null, details);
 
     const sourcesCard = el("aside", { class: "card sources-card", "aria-label": "Sources" },
       el("p", { class: "label", text: data.sources.length ? `Sources (${data.sources.length})` : "Sources" }),
@@ -694,6 +725,61 @@ details.details summary:hover { color: var(--text-muted); }
         : el("p", { class: "sources-empty", text: "No pages cited." }));
 
     return el("div", { class: "answer-layout fade" }, answerCard, sourcesCard);
+  }
+
+  // ---------- feedback (step 9b) ----------
+  // A rating goes to a reviewer, never to the model. A thumbs-down asks what was wrong, with an optional comment.
+  function feedbackRow(answerId) {
+    const wrap = el("div", { class: "feedback", role: "group", "aria-label": "Rate this answer" });
+    const status = el("p", { class: "feedback-error", role: "status", hidden: true });
+    const up = el("button", { type: "button", class: "icon-btn", "aria-label": "Helpful", title: "Helpful" }, icon("thumbs-up"));
+    const down = el("button", { type: "button", class: "icon-btn", "aria-label": "Not helpful", title: "Not helpful" }, icon("thumbs-down"));
+    const row = el("div", { class: "feedback-row" }, el("span", { text: "Was this answer helpful?" }), up, down);
+
+    function done() {
+      wrap.replaceChildren(el("p", { class: "feedback-done", role: "status" }, icon("check"),
+        "Thank you. A reviewer reads every thumbs-down."));
+    }
+    async function send(rating, reason, comment, buttons) {
+      buttons.forEach((b) => { b.disabled = true; });
+      status.hidden = true;
+      try {
+        const response = await fetch("/api/feedback", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer_id: answerId, rating, reason, comment }),
+        });
+        const data = await readJson(response);
+        if (response.ok || response.status === 409) { done(); return; }
+        status.textContent = failure(response.status, data).message;
+      } catch {
+        status.textContent = "Could not send the rating. Try again in a moment.";
+      }
+      status.hidden = false;
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+    up.addEventListener("click", () => send("up", null, null, [up, down]));
+    down.addEventListener("click", () => {
+      const reason = el("select", { id: `reason-${answerId}` },
+        REASONS.map(([value, text]) => el("option", { value, text })));
+      const comment = el("textarea", { id: `comment-${answerId}`, maxlength: String(MAX_COMMENT), rows: "3",
+        placeholder: "What should it have said? (optional)" });
+      const submit = el("button", { type: "submit", class: "btn" }, "Send");
+      const cancel = el("button", { type: "button", class: "btn btn-light" }, "Cancel");
+      const form = el("form", { class: "feedback-form" },
+        el("label", { class: "option-label", for: `reason-${answerId}`, text: "What was wrong?" }),
+        el("div", { class: "select-wrap" }, reason, icon("chevron")),
+        el("label", { class: "visually-hidden", for: `comment-${answerId}`, text: "Comment" }), comment,
+        el("div", { class: "feedback-actions" }, submit, cancel));
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        send("down", reason.value, comment.value.trim() || null, [submit, cancel]);
+      });
+      cancel.addEventListener("click", () => wrap.replaceChildren(row, status));
+      wrap.replaceChildren(row, form, status);
+      reason.focus();
+    });
+    wrap.append(row, status);
+    return wrap;
   }
 
   // With no retry (the day's limit is reached), the panel has no button.

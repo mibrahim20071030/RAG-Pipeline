@@ -14,18 +14,25 @@ POST /api/uploads {"filename": "x.pdf", "size": <bytes>}       (step 9a)
   200 -> {upload_id, filename, limits, post: {url, fields}}   (deployed: the browser posts the file to S3)
       or {upload_id, filename, limits, put_url}               (local: the browser PUTs the file to the server)
 GET /api/uploads/<id> -> 200 the upload's record (rag.uploads.PUBLIC_FIELDS)
+POST /api/feedback {"answer_id": "...", "rating": "up" | "down", "reason": null | "<reason>", "comment": "..."}
+  200 -> {"ok": true}                                        (step 9b; one rating per answer)
+
+A 200 answer about the curated datasheets also has `answer_id` (step 9b): the answer is saved, so it can be rated and
+reviewed. It is null for an upload, or when the answer could not be saved.
 
 pdf_url is /pdfs/<file> when the PDF is on this machine (rag.server serves it), else the vendor's https address, else
 null.
 """
 import contextlib
+import time
 import traceback
+import unicodedata
 from urllib.parse import quote
 
 import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 
-from rag import config, costlog, db, generate, kb, pipeline, uploads, usage
+from rag import config, costlog, db, generate, kb, pipeline, records, uploads, usage
 
 NO_DATABASE = "Cannot reach Postgres. Start Docker Desktop, then run: docker start rag-pg"
 # The same failures as seen by a visitor of the deployed page (config.DEPLOYED), with no local-machine hints.
@@ -38,6 +45,8 @@ DEMO_OFF = "The demo is switched off right now. Try again later."
 UPLOAD_UNKNOWN = "That upload is not known or has expired (uploads are kept for 24 hours). Upload the PDF again."
 UPLOAD_BUSY = "Another PDF is being processed right now. Try again in a few minutes."
 UPLOAD_DAILY_LIMIT = "The demo has reached today's limit of uploads. Try again tomorrow (the day starts at 00:00 UTC)."
+ANSWER_UNKNOWN = "That answer is not known or has expired, so it cannot be rated."
+FEEDBACK_DAILY_LIMIT = "The demo has reached today's limit of ratings. Thank you all the same."
 
 
 def no_database() -> str:
@@ -85,7 +94,7 @@ def _source(source: dict, files: dict[str, str | None], upload_title: str | None
     # An upload has no address: the page opens the visitor's own copy of the file.
     upload = bool(source["document"]) and source["document"].startswith(config.UPLOAD_PREFIX)
     url = None if upload else _pdf_url(source["document"], files.get(source["document"]))
-    return {
+    shown = {
         "label": source["label"],
         "document": source["document"],
         "part": upload_title if upload else config.DOCUMENTS.get(source["document"], {}).get("part"),
@@ -97,6 +106,9 @@ def _source(source: dict, files: dict[str, str | None], upload_title: str | None
         # A Knowledge Base passage may have no page: then the link opens the datasheet, not a made-up page.
         "pdf_url": (f"{url}#page={source['page']}" if source["page"] is not None else url) if url else None,
     }
+    if generate.is_note(source):
+        shown["note"] = True  # a reviewer's note (step 9b), checked against this page
+    return shown
 
 
 def answer_parts(answer: str, passages: list[dict]) -> list[dict]:
@@ -194,14 +206,17 @@ def check_pipeline(payload: dict) -> tuple[str | None, tuple[int, dict] | None]:
 
 
 def ask(payload, open_conn, answer_fn=None, counter=None, kb_answer_fn=None,
-        upload_store=None, kb_status=None) -> tuple[int, dict]:
+        upload_store=None, kb_status=None, answer_store=None) -> tuple[int, dict]:
     """Answer one question from the page. Never raises for a bad request, an AWS refusal or a lost database.
 
     `open_conn()` gives a context manager that yields a database connection. It is entered only after the request
     passed every check and took a place under the daily cap, so nothing else wakes the database, and never for the
     Knowledge Base pipeline. `counter` is the daily counter (default rag.usage); tests pass fakes for it and for
     the two answer functions. A question about an upload (`upload_id`) is checked against its record in
-    `upload_store` (default rag.uploads.default_store()) before anything is counted, paid or opened."""
+    `upload_store` (default rag.uploads.default_store()) before anything is counted, paid or opened.
+
+    With an `answer_store` (rag.records; the handler and the local server pass theirs), a 200 answer about the
+    curated datasheets is saved and gets an `answer_id`, so it can be rated."""
     question, document, error = check_ask(payload)
     if error:
         return error
@@ -235,6 +250,7 @@ def ask(payload, open_conn, answer_fn=None, counter=None, kb_answer_fn=None,
     if name == "kb":
         logged_before = costlog.row_count()
         status, body = _answer_kb(question, document, kb_answer_fn, upload_title)
+        _save_answer(answer_store, status, body, question, document, name, record)
         # The place goes back only when the cost log shows nothing was paid for (KB_ID unset, Retrieve refused or
         # throttled). An unreadable log keeps the place, so a failure never lifts the cap.
         if capped and status != 200 and costlog.spent_since(logged_before) == 0:
@@ -254,7 +270,26 @@ def ask(payload, open_conn, answer_fn=None, counter=None, kb_answer_fn=None,
     if capped and (not connected or status in (400, 429)):
         with contextlib.suppress(ClientError, BotoCoreError):
             counter.release(kind, day=day)
+    _save_answer(answer_store, status, body, question, document, name, record)
     return status, body
+
+
+def _save_answer(store, status: int, body: dict, question: str, document, name: str, upload) -> None:
+    """Give a 200 answer its `answer_id` and save it (step 9b). An upload's answer is not saved: it is private, and
+    a note can only cite a curated datasheet. A failed save leaves the answer as it is, with no id."""
+    if status != 200:
+        return
+    body["answer_id"] = None
+    result = body.pop("_result", None)
+    if store is None or upload is not None or result is None:
+        return
+    answer_id = records.new_id()
+    try:
+        if store.put_new(records.ANSWER + answer_id,
+                         records.answer_record(answer_id, question, document, name, result, body)):
+            body["answer_id"] = answer_id
+    except (ClientError, BotoCoreError, RuntimeError):
+        traceback.print_exc()
 
 
 def _answer(conn, question: str, document: str | None, answer_fn, upload_title=None) -> tuple[int, dict]:
@@ -310,6 +345,7 @@ def _body(question: str, result: dict, files: dict, warnings: list[str], setup: 
         "timings_ms": result["timings_ms"],
         "spent_usd": costlog.spent_since(logged_before),
         "setup": setup,
+        "_result": result,  # taken out again by _save_answer, before the body is sent
     }
 
 
@@ -387,3 +423,72 @@ def upload_status(upload_id, store, kb_status=None) -> tuple[int, dict]:
         traceback.print_exc()
         return _error(503, BUSY)
     return 200, uploads.public(record)
+
+
+# ---------------------------------------------------------------- feedback (step 9b)
+
+def _clean_text(value) -> str:
+    """A visitor's comment without control characters (new lines kept), trimmed."""
+    return "".join(ch for ch in value if ch in "\n\t" or unicodedata.category(ch)[0] != "C").strip()
+
+
+def check_feedback(payload) -> tuple[dict | None, tuple[int, dict] | None]:
+    """The rating of a request {"answer_id", "rating", "reason", "comment"}, or the error to answer."""
+    if not isinstance(payload, dict):
+        return None, _error(400, "Send a JSON object with the answer's id and a rating.")
+    answer_id, rating = payload.get("answer_id"), payload.get("rating")
+    if not records.valid_id(answer_id):
+        return None, _error(404, ANSWER_UNKNOWN)
+    if rating not in config.FEEDBACK_RATINGS:
+        return None, _error(400, "Rate the answer up or down.")
+    reason = payload.get("reason")
+    if reason in (None, ""):
+        reason = None
+    elif rating == "up" or reason not in config.FEEDBACK_REASONS:
+        return None, _error(400, "Pick a reason from the list.")
+    comment = payload.get("comment")
+    if comment in (None, ""):
+        comment = None
+    elif not isinstance(comment, str):
+        return None, _error(400, "The comment must be text.")
+    else:
+        comment = _clean_text(comment) or None
+        if comment and len(comment) > config.FEEDBACK_MAX_COMMENT_CHARS:
+            return None, _error(400, f"Keep the comment under {config.FEEDBACK_MAX_COMMENT_CHARS} characters.")
+    return {"answer_id": answer_id, "rating": rating, "reason": reason, "comment": comment}, None
+
+
+def feedback(payload, store, counter=None, now=None) -> tuple[int, dict]:
+    """Save one visitor's rating of an answer, with a copy of the answer, for review. One rating per answer.
+    Touches no database; the comment is stored only, never given to the model."""
+    rating, error = check_feedback(payload)
+    if error:
+        return error
+    capped = config.FEEDBACK_DAILY_LIMIT > 0
+    day = usage.today()
+    counter = counter or usage
+    try:
+        if capped and counter.take("feedback", config.FEEDBACK_DAILY_LIMIT, day=day) is None:
+            return 429, {"error": FEEDBACK_DAILY_LIMIT, "limit": "daily"}
+    except (ClientError, BotoCoreError, RuntimeError):
+        traceback.print_exc()
+        return _error(503, BUSY)
+    now = time.time() if now is None else now
+    try:
+        answer = store.get(records.ANSWER + rating["answer_id"])
+        if answer is None:
+            status, body = _error(404, ANSWER_UNKNOWN)
+        else:
+            item = {**rating, "created_at": int(now), "expires_at": records.days(config.FEEDBACK_KEEP_DAYS, now),
+                    # Only a thumbs-down waits for a reviewer; a thumbs-up is counted in the report.
+                    "status": "pending" if rating["rating"] == "down" else "noted", "answer": answer}
+            if store.put_new(records.FEEDBACK + rating["answer_id"], item):
+                return 200, {"ok": True}
+            status, body = _error(409, "This answer has been rated already.")
+    except (ClientError, BotoCoreError, RuntimeError):
+        traceback.print_exc()
+        status, body = _error(503, BUSY)
+    if capped:  # nothing was saved: the place goes back
+        with contextlib.suppress(ClientError, BotoCoreError, RuntimeError):
+            counter.release("feedback", day=day)
+    return status, body

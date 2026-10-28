@@ -6,6 +6,12 @@ step 9a, started by S3 when an uploaded PDF lands under incoming/; it is the onl
 POST /api/ask           {"question": "...", "document": null | "<name>", "upload_id": ...} -> rag.api.ask
 POST /api/uploads       {"filename": "...", "size": ...}  -> rag.api.start_upload (a presigned POST to S3)
 GET  /api/uploads/<id>                                     -> rag.api.upload_status
+POST /api/feedback      {"answer_id": "...", "rating": ...} -> rag.api.feedback (step 9b)
+     /api/review/...                                       -> rag.review.route (step 9b; a reviewer's Cognito login)
+
+The reviewer routes are behind API Gateway's JWT authorizer, which refuses a request without a valid token before
+this function runs. Here the token's groups must also include REVIEWER_GROUP (REVIEW_AUTH, on when deployed), so a
+login alone is not enough. /api/review/config is the exception: the page reads it before logging in.
 
 Both API Gateway payload formats are read: HTTP API (version 2.0) and REST API (version 1.0); a stage name at the
 start of the path is ignored. CORS headers are API Gateway's job.
@@ -27,12 +33,23 @@ from urllib.parse import unquote_plus
 
 import psycopg
 
-from rag import api, config, db, kb, uploads
+from rag import api, config, db, kb, records, review, uploads
 
 # GET /api/documents was removed in step 7b: the page has the list written in. "/api/uploads/{id}" stands for
 # /api/uploads/<any id>.
-ROUTES = {"/api/ask": "POST", "/api/uploads": "POST", "/api/uploads/{id}": "GET"}
+ROUTES = {"/api/ask": "POST", "/api/uploads": "POST", "/api/uploads/{id}": "GET", "/api/feedback": "POST"}
 UPLOAD_PATH = "/api/uploads/"
+REVIEW_CONFIG = review.PREFIX + "config"
+
+
+def _query(event: dict) -> dict:
+    return {str(name): str(value) for name, value in (event.get("queryStringParameters") or {}).items()}
+
+
+def _claims(event: dict) -> dict:
+    """The token's claims as API Gateway's authorizer passed them: HTTP API (jwt.claims) or REST API (claims)."""
+    authorizer = (event.get("requestContext") or {}).get("authorizer") or {}
+    return (authorizer.get("jwt") or {}).get("claims") or authorizer.get("claims") or {}
 
 
 def _request(event: dict) -> tuple[str, str, dict, str | bytes | None]:
@@ -106,15 +123,17 @@ def _route(path: str) -> str:
     return path
 
 
-def lambda_handler(event, context, connect=None, ask=None, store=None, presign=None, kb_status=None) -> dict:
-    """One API Gateway request. `connect`, `ask`, the upload store, `presign` and `kb_status` replace the real ones in
-    tests."""
+def lambda_handler(event, context, connect=None, ask=None, store=None, presign=None, kb_status=None,
+                   answers=None, review_deps=None) -> dict:
+    """One API Gateway request. `connect`, `ask`, the upload store, `presign`, `kb_status`, the answer and feedback
+    store (`answers`) and the reviewer routes' `review_deps` replace the real ones in tests."""
     connect, ask = connect or db.connect, ask or api.ask
     start = time.perf_counter()
     log = {}
     try:
         response = _handle(event if isinstance(event, dict) else {}, connect, ask, log,
-                           (store, presign or uploads.presign_post, kb_status or kb.ingestion_status))
+                           (store, presign or uploads.presign_post, kb_status or kb.ingestion_status),
+                           (answers, review_deps))
     except Exception:  # noqa: BLE001 (any failure still gets an answer the page can show, and a log line)
         traceback.print_exc()
         response = _error(500, "The server hit an unexpected error. Its log has the details.")
@@ -124,13 +143,16 @@ def lambda_handler(event, context, connect=None, ask=None, store=None, presign=N
     return response
 
 
-def _handle(event, connect, ask, log, upload_parts) -> dict:
+def _handle(event, connect, ask, log, upload_parts, feedback_parts) -> dict:
     if not config.DEMO_ENABLED:
         return _response(503, {"error": api.DEMO_OFF, "off": True})
     try:
         method, path, headers, body = _request(event)
     except ValueError:
         return _error(400, "The request body is not valid base64.")
+    answers, review_deps = feedback_parts
+    if path.startswith(review.PREFIX):
+        return _review(event, method, path, headers, body, connect, log, answers, review_deps)
     route = _route(path)
     log.update({"method": method, "path": route})  # an upload id is not logged
     if route not in ROUTES:
@@ -151,13 +173,46 @@ def _handle(event, connect, ask, log, upload_parts) -> dict:
         status, data = api.start_upload(payload, store, presign, to_kb=uploads.kb_configured())
         log["upload"] = status == 200
         return _response(status, data)
+    answers = answers or records.default_store()
+    if route == "/api/feedback":
+        # Never connects to the database. The comment is not logged.
+        status, data = api.feedback(payload, answers)
+        if isinstance(payload, dict) and payload.get("rating") in ("up", "down"):
+            log["rating"] = payload["rating"]
+        return _response(status, data)
 
     if isinstance(payload, dict):
         # Logged before the API checks it, so an unknown value is logged as such, never copied in.
         name = "ours" if payload.get("pipeline") is None else payload["pipeline"]  # as api.check_pipeline reads it
         log["pipeline"] = name if name in config.PIPELINES else "unknown"
-    status, data = ask(payload, lambda: _open_conn(connect, log), upload_store=store)
+    status, data = ask(payload, lambda: _open_conn(connect, log), upload_store=store, answer_store=answers)
     log.update({key: data[key] for key in ("timings_ms", "spent_usd") if key in data})
+    if data.get("answer_id"):
+        log["answer_saved"] = True
+    return _response(status, data)
+
+
+def _review(event, method, path, headers, body, connect, log, answers, deps) -> dict:
+    """A reviewer route: only for a token whose groups include REVIEWER_GROUP (see the module notes)."""
+    log.update({"method": method, "path": "/api/review/..."})  # ids are not logged
+    if path == REVIEW_CONFIG and method == "GET":
+        return _response(200, review.config_body())
+    reviewer = "local"
+    if config.REVIEW_AUTH:
+        claims = _claims(event)
+        if config.REVIEWER_GROUP not in review.groups(claims):
+            return _error(403, "This page is for reviewers. Log in with a reviewer's account.")
+        reviewer = str(claims.get("sub") or claims.get("username") or "unknown")
+    log["reviewer"] = reviewer
+    payload = None
+    if method == "POST":
+        payload, error = _payload(headers, body)
+        if error:
+            return error
+    elif method != "GET":
+        return _error(405, "Use GET or POST.")
+    deps = deps or review.Deps(store=answers or records.default_store(), open_conn=lambda: _open_conn(connect, log))
+    status, data = review.route(method, path, _query(event), payload, reviewer, deps)
     return _response(status, data)
 
 

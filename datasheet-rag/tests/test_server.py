@@ -30,7 +30,7 @@ def running(tmp_path):
         calls["connect"] += 1
         return FakeConn()
 
-    def ask(payload, open_conn, upload_store=None):
+    def ask(payload, open_conn, upload_store=None, answer_store=None, kb_answer_fn=None):
         try:  # as rag.api.ask does: the connection is asked for, and a database that is down is a 503
             with open_conn():
                 pass
@@ -254,7 +254,7 @@ def test_local_ask_is_given_the_servers_upload_store(running):
     seen = {}
     real_ask = state.ask
 
-    def ask(payload, open_conn, upload_store=None):
+    def ask(payload, open_conn, upload_store=None, answer_store=None, kb_answer_fn=None):
         seen["store"] = upload_store
         return real_ask(payload, open_conn)
 

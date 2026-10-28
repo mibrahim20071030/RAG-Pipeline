@@ -445,7 +445,11 @@ def test_kb_plan_reads_only_the_kb_counter(monkeypatch):
     counted = []
     monkeypatch.setattr(de.usage, "count", lambda kind: counted.append(kind) or 7)
     monkeypatch.setattr(de.db, "connect", lambda **kw: (_ for _ in ()).throw(AssertionError("must not wake Aurora")))
+    monkeypatch.setattr(de, "notes_embed_on", lambda: False)
     plan = de.plan_kb_pass([QUESTION] * 3)
-    assert counted == ["kb_asks"] and plan["retrieve_calls"] == 3
-    assert plan["cost"]["retrieve"] == 3 * config.KB_USD_PER_RETRIEVE
+    assert counted == ["kb_asks"] and plan["retrieve_calls"] == 3 and plan["embed_calls"] == 0
+    assert plan["cost"]["retrieve"] == 3 * config.KB_USD_PER_RETRIEVE and plan["cost"]["embed"] == 0
+    monkeypatch.setattr(de, "notes_embed_on", lambda: True)  # a published note: one Titan embed per question,
+    plan = de.plan_kb_pass([QUESTION] * 3)                    # never a second Retrieve
+    assert plan["retrieve_calls"] == 3 and plan["embed_calls"] == 3 and plan["cost"]["embed"] > 0
     assert plan["daily_left"] == config.DEPLOYED_KB_DAILY_LIMIT - 7

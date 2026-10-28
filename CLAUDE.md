@@ -270,7 +270,52 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     datasheet and pipeline behind one options button). Walkthrough written: `walkthroughs/Step9a_Walkthrough.pdf`.
   - Closed on 2026-10-24: both Lambda ask caps back to 50 (checked), the tidied page live (equal to the local file
     once line endings are compared the same way), merged as PR #22.
-- Next after 9a: 9b (feedback loop on both), then 9c (both tested again), each in plan mode, when the human says so.
+- Cycle 2 step 9b (feedback loop): BUILT, deployed and tested on 2026-10-28 (single agent, uncommitted in the working
+  tree, waiting for the walkthrough and the human's PR). Plans: `C:\Users\muham\.claude\plans\plan-to-build-9b-effervescent-dream.md`
+  and, for the shared matcher, `C:\Users\muham\.claude\plans\temporal-tinkering-rabbit.md`. Setup:
+  `datasheet-rag/runs/feedback_setup.md`. Results: `datasheet-rag/runs/feedback_eval.md`.
+  - Built:
+    - `rag/records.py`: answer, rating and note records in `datasheet-rag-usage`.
+    - `rag/corrections.py`: `match` (ours), `kb_match` (the AWS managed side), publish, refresh, retract, discard.
+    - `rag/review.py`: the reviewer API.
+    - `api.feedback`; an `answer_id` on every curated 200.
+    - Handler routes `POST /api/feedback` and `/api/review/*`. The reviewer group is checked on top of API
+      Gateway's JWT authorizer, and `REVIEW_AUTH` is never set in Lambda.
+    - `web/review.html`: dark, list beside the open item, Discard, button rules per status, Finish retract.
+    - The 👎 / 👍 row in `index.html`.
+    - `data/correction_cases.jsonl` (12 cases) and `rag/eval/correction_eval.py`.
+  - **One matcher for both pipelines (the human's choice, 2026-10-28):** the Titan cosine similarity of question and
+    note, at least `CORRECTION_MIN_SIMILARITY` = 0.70 (it separates all 12 cases from the other 46 questions, by
+    about 0.03 on each side).
+    - Ours: pgvector on the Aurora `corrections` table, with the search's question vector.
+    - The AWS managed side: DynamoDB item `notes#list` holds each published note's text and vector (base64
+      float32, equal to Aurora's); the question is embedded once with Titan, only while a note that could fit is
+      published; the KB path never wakes Aurora. A notes failure answers without notes.
+    - Not the KB's own Retrieve: its scores only rank the notes for one question (reranker on: 0.37–0.50 for fits
+      and non-fits alike; off: set by the rank), so no threshold works.
+    - The list is edited in place by every publish and retract (consistent read, written with a `version` check),
+      never rebuilt from a Scan; the first edit seeded it from the notes already published. The old item
+      `notes#published` is no longer read. At most `CORRECTION_MAX_PUBLISHED` (50) notes fit the 400 KB item.
+    - Publish goes live on both at once. A retract whose database does not answer leaves the note out of the KB side
+      with `ours` "retracting" (503); retracting again finishes it ("Finish retract" on the page).
+    - The Notes page shows each note's record, not a live check of either side.
+  - Code reviews 2 of 2 done and recorded (first 9 of 9 fixed; second 7 of 10 fixed, the three left with reasons in
+    `progress.md`, 2026-10-28). 1,317 tests pass.
+  - Deployed and checked:
+    - Cognito pool `datasheet-rag-review` (Essentials; no Lite on this account), group `reviewers`;
+    - JWT authorizer `cognito-reviewers`;
+    - inline policy `rag-feedback` on the Lambda role (now only `dynamodb:Scan` on the usage table);
+    - Aurora `corrections` table;
+    - Lambda `CORRECTION_MIN_SIMILARITY=0.7`; zip 22,819,901 bytes.
+    - The notes bucket and the KB data source `corrections` were deleted on 2026-10-28 (no longer used).
+      `CORRECTION_BUCKET` is still set on the Lambda (unused; to remove).
+  - Three notes are published (q08 LM35 p.5, q24 ESP32 p.46, q33 STM32 p.71).
+  - Results (12 cases × 2 pipelines): before, 0/3 originals and 1–2/6 paraphrases passed; after, 3/3 and 6/6 on
+    both pipelines, each with its own note, and 3/3 negatives with no note. Retract test: q24 refused on both with
+    the note retracted, as before it. Step 9b spend about $0.18.
+  - **Next:** the walkthrough (it must include the 2026-10-28 explanation of why a reranker score cannot be a
+    threshold and the cosine can: the human asked), then the human's PR.
+- Then 9c (both tested again), in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
@@ -757,7 +802,7 @@ Order of work, each with a test written when the step starts:
 - Empty and delete the S3 bucket `datasheet-rag-web-...` (the page; no PDFs are in S3).
 - Delete the Managed Knowledge Base `datasheet-rag-kb` and its data source `datasheets` (AgentCore console), the KB source bucket `datasheet-rag-kb-...`, and the KB service role the console created. Remove the inline policy `rag-kb-query` from the dev user and from the Lambda role.
 - Delete the upload resources (step 9a): the upload bucket or prefix, the ingest Lambda and its role, the upload routes.
-- Delete the feedback loop's resources (step 9b): the DynamoDB table, the KB correction index or S3 prefix, the `/api/feedback` route, and their IAM permissions. The `corrections` table goes with the Aurora cluster.
+- Delete the feedback loop's resources (step 9b): the Cognito user pool `datasheet-rag-review` and the JWT authorizer `cognito-reviewers`, the `/api/feedback` and `/api/review/*` routes, and the inline policy `rag-feedback`. The notes bucket and the KB data source `corrections` were already deleted on 2026-10-28. The note records go with the DynamoDB table; the `corrections` table goes with the Aurora cluster.
 - Delete the DynamoDB table `datasheet-rag-usage` (step 7b) and the inline policies `rag-usage-table` (Lambda
   role) and `rag-usage-read` (dev user).
 - Delete the Aurora cluster (`datasheet-rag`). Skip the final snapshot unless one is wanted. Delete any manual snapshots. (The secret `datasheet-rag/rag_data` was already deleted on 2026-10-17.)

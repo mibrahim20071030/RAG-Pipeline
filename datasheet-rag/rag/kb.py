@@ -12,6 +12,7 @@ is printed after the answer, and every call is in runs/cost_log.csv.
 import argparse
 import sys
 import time
+import traceback
 from pathlib import PurePosixPath
 from urllib.parse import unquote, urlparse
 
@@ -59,6 +60,11 @@ def search_config(document: str | None, k: int) -> dict:
     managed = {"numberOfResults": k, "rerankingModelType": "MANAGED"}
     if document is not None:
         managed["filter"] = {"equals": {"key": config.KB_DOCUMENT_KEY, "value": document}}
+        if config.KB_CURATED_DATA_SOURCE_ID and not document.startswith(config.UPLOAD_PREFIX):
+            # A reviewer's note (step 9b) names its datasheet too: only the curated data source is a datasheet.
+            managed["filter"] = {"andAll": [
+                managed["filter"],
+                {"equals": {"key": config.KB_DATA_SOURCE_KEY, "value": config.KB_CURATED_DATA_SOURCE_ID}}]}
     elif config.KB_UPLOAD_DATA_SOURCE_ID and not config.KB_CURATED_DATA_SOURCE_ID:
         # With an uploads data source, the curated filter is all that keeps visitors' PDFs out of this search.
         raise RuntimeError("KB_CURATED_DATA_SOURCE_ID is not set, so a search of all datasheets would also read "
@@ -130,19 +136,36 @@ def _ms_since(start: float) -> float:
     return round((time.perf_counter() - start) * 1000, 1)
 
 
-def answer_question(question: str, document: str | None = None, retrieve_client=None, generate_client=None) -> dict:
+def answer_question(question: str, document: str | None = None, retrieve_client=None, generate_client=None,
+                    notes_fn=None) -> dict:
     """Answer one question from the KB's passages. The same result shape as `pipeline.answer_question`, with
-    `timings_ms` {"retrieve", "generate"}."""
+    `timings_ms` {"retrieve", "generate"}, plus "notes" when notes are on.
+
+    With notes on (step 9b), the published reviewers' notes that match the question go first: `notes_fn(question,
+    document)` gives them (default `rag.corrections.kb_match`: one Titan embed of the question, only while a note
+    that could fit is published)."""
     start = time.perf_counter()
     passages = retrieve(question, document=document, client=retrieve_client)
-    retrieve_ms = _ms_since(start)
+    timings = {"retrieve": _ms_since(start)}
+
+    if config.CORRECTIONS_ENABLED:
+        from rag import corrections
+
+        start = time.perf_counter()
+        try:
+            notes = (notes_fn or corrections.kb_match)(question, document)
+        except (ClientError, BotoCoreError, RuntimeError):
+            # The list or the embed did not answer: the answer goes on without notes, as on our side.
+            traceback.print_exc()
+            notes = []
+        passages = notes + passages
+        timings["notes"] = _ms_since(start)
 
     start = time.perf_counter()
     result = generate.generate(question, passages, client=generate_client)
-    generate_ms = _ms_since(start)
+    timings["generate"] = _ms_since(start)
 
-    return {"question": question, **result, "passages": passages,
-            "timings_ms": {"retrieve": retrieve_ms, "generate": generate_ms}}
+    return {"question": question, **result, "passages": passages, "timings_ms": timings}
 
 
 def warnings(result: dict) -> list[str]:

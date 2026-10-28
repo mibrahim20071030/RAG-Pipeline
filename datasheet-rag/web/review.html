@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0B1120">
+<title>Review · Datasheet Q&amp;A</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233B82F6'/%3E%3Cpath d='m10 16 4 4 8-8' fill='none' stroke='%23FFFFFF' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Dark slate by default (the design system's "Dark Mode" for developer tools); a light theme on the toggle. */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0B1120; --bg-raised: #0F172A; --panel: #131C2E; --panel-hover: #18233A; --inset: #0D1526;
+  --line: #1F2A40; --line-strong: #2C3A55;
+  --text: #E7ECF4; --text-muted: #9AA8BF; --text-faint: #6B7A93;
+  --accent: #3B82F6; --accent-hover: #2F72E4; --accent-soft: rgba(59, 130, 246, 0.14); --accent-text: #8DB6FF;
+  --ok: #22C55E; --ok-soft: rgba(34, 197, 94, 0.13); --ok-text: #6EE7A0;
+  --warn: #F59E0B; --warn-soft: rgba(245, 158, 11, 0.13); --warn-text: #FCD181;
+  --bad: #EF4444; --bad-soft: rgba(239, 68, 68, 0.13); --bad-text: #FCA5A5;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  --skeleton: #1A2438;
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F5F7FB; --bg-raised: #FFFFFF; --panel: #FFFFFF; --panel-hover: #F3F6FB; --inset: #F1F4F9;
+  --line: #E3E8EF; --line-strong: #CBD5E1;
+  --text: #0F172A; --text-muted: #51607A; --text-faint: #7D8BA3;
+  --accent: #2563EB; --accent-hover: #1D4ED8; --accent-soft: #EAF1FF; --accent-text: #1D4ED8;
+  --ok: #16A34A; --ok-soft: #EAF8EF; --ok-text: #067647;
+  --warn: #D97706; --warn-soft: #FFF6E5; --warn-text: #8A5A00;
+  --bad: #DC2626; --bad-soft: #FEF0F0; --bad-text: #B42318;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px -16px rgba(15, 23, 42, 0.16);
+  --skeleton: #E9EEF5;
+}
+:root {
+  --radius: 12px; --radius-sm: 8px;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; font: 400 15px/1.55 var(--font); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+button, select, textarea, input { font: inherit; color: inherit; }
+a { color: var(--accent-text); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.icon { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mono { font-family: var(--mono); font-size: 0.86em; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ===== Shell: sidebar + main ===== */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100%; }
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; padding: 18px 12px; background: var(--bg-raised); border-right: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; font-weight: 600; color: var(--text); text-decoration: none; }
+.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; }
+.brand small { display: block; font-size: 12px; font-weight: 500; color: var(--text-faint); }
+.nav { display: grid; gap: 2px; }
+.nav button { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 10px; font-weight: 500; color: var(--text-muted); background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; transition: background-color 150ms, color 150ms; }
+.nav button:hover { color: var(--text); background: var(--panel-hover); }
+.nav button[aria-current="page"] { color: var(--text); background: var(--accent-soft); }
+.nav button[aria-current="page"] .icon { color: var(--accent-text); }
+.nav .count { margin-left: auto; min-width: 22px; padding: 0 7px; font: 600 12px/20px var(--mono); text-align: center; color: var(--text-muted); background: var(--inset); border-radius: 999px; }
+.nav .count:empty { display: none; }
+.sidebar-foot { margin-top: auto; display: grid; gap: 8px; padding: 12px 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-faint); }
+.sidebar-foot .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.main { min-width: 0; padding: 28px 32px 64px; }
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { margin: 0; font-size: 1.45rem; font-weight: 600; letter-spacing: -0.015em; }
+.page-head p { margin: 4px 0 0; color: var(--text-muted); font-size: 14px; max-width: 640px; }
+.kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; font: 500 11px/1 var(--mono); color: var(--text-muted); background: var(--inset); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; }
+.hint { font-size: 12px; color: var(--text-faint); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* ===== Buttons and fields ===== */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; font-size: 14px; font-weight: 600; color: #fff; background: var(--accent); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; transition: background-color 150ms, border-color 150ms, transform 80ms; }
+.btn:hover { background: var(--accent-hover); }
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: 0.55; cursor: progress; }
+.btn-ghost { color: var(--text); background: transparent; border-color: var(--line-strong); }
+.btn-ghost:hover { background: var(--panel-hover); }
+.btn-danger { color: var(--bad-text); background: transparent; border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.btn-danger:hover { background: var(--bad-soft); }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 13px; }
+.icon-btn { display: grid; place-items: center; width: 34px; height: 34px; color: var(--text-muted); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: background-color 150ms, color 150ms; }
+.icon-btn:hover { color: var(--text); background: var(--panel-hover); }
+label.field { display: grid; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-faint); }
+input[type="text"], input[type="number"], select, textarea { width: 100%; padding: 9px 11px; font-size: 14px; color: var(--text); background: var(--inset); border: 1px solid var(--line); border-radius: var(--radius-sm); transition: border-color 150ms, box-shadow 150ms; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { min-height: 96px; resize: vertical; line-height: 1.5; }
+.field-hint { margin: 0; font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-faint); }
+.check { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text); cursor: pointer; }
+.check input { width: 16px; height: 16px; margin-top: 3px; accent-color: var(--accent); }
+
+/* ===== Panels, chips ===== */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--text-muted); background: var(--inset); border: 1px solid var(--line); border-radius: 999px; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.85; }
+.chip.plain::before { display: none; }
+.chip.ok { color: var(--ok-text); background: var(--ok-soft); border-color: transparent; }
+.chip.warn { color: var(--warn-text); background: var(--warn-soft); border-color: transparent; }
+.chip.bad { color: var(--bad-text); background: var(--bad-soft); border-color: transparent; }
+.chip.info { color: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
+.chip.live::before { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; color: var(--text-muted); }
+.sep { color: var(--text-faint); }
+
+/* ===== Queue: list + detail ===== */
+.split { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.list { display: grid; gap: 6px; max-height: calc(100vh - 150px); overflow: auto; padding: 2px; scrollbar-width: thin; }
+.item { display: grid; gap: 6px; width: 100%; padding: 12px 14px; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: border-color 150ms, background-color 150ms; }
+.item:hover { background: var(--panel-hover); }
+.item[aria-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.item-q { font-size: 14px; font-weight: 500; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--text-faint); }
+.item-meta > span { white-space: nowrap; }
+.item-meta .chip { height: 20px; font-size: 11px; }
+.detail { padding: 22px 24px; display: grid; gap: 18px; position: sticky; top: 20px; }
+.section-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
+.question { margin: 0; font-size: 1.12rem; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.answer { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--inset); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; }
+.comment { padding: 12px 14px; background: var(--warn-soft); border-left: 3px solid var(--warn); border-radius: var(--radius-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment b { display: block; margin-bottom: 4px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--warn-text); }
+details.passages summary { cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+details.passages summary::-webkit-details-marker { display: none; }
+details.passages summary .icon { transition: transform 200ms var(--ease); }
+details.passages[open] summary .icon { transform: rotate(90deg); }
+.passage { margin-top: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--inset); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.passage b { display: block; margin-bottom: 4px; font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--accent-text); }
+.passage.note b { color: var(--ok-text); }
+.choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.choice { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 14px; text-align: left; background: var(--inset); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: border-color 150ms, background-color 150ms; }
+.choice:hover { border-color: var(--line-strong); background: var(--panel-hover); }
+.choice[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.choice .kbd { flex: none; }
+.choice small { display: block; font-size: 12px; color: var(--text-faint); }
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline input { flex: 1; }
+.form-grid { display: grid; gap: 14px; }
+.form-row { display: grid; grid-template-columns: minmax(0, 2fr) 120px auto; gap: 10px; align-items: end; }
+.page-box { max-height: 280px; overflow: auto; display: grid; gap: 6px; padding: 10px; background: var(--inset); border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); }
+.page-box p { margin: 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); }
+.empty-state { display: grid; place-items: center; gap: 8px; padding: 56px 20px; text-align: center; color: var(--text-muted); }
+.empty-state .icon { width: 28px; height: 28px; color: var(--ok); }
+.empty-state strong { color: var(--text); font-size: 15px; }
+
+/* ===== Notes ===== */
+.notes { display: grid; gap: 10px; }
+.note-card { padding: 16px 18px; display: grid; gap: 10px; }
+.note-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.note-head .grow { flex: 1; }
+.note-text { margin: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pipes { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-muted); }
+.pipe { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.error-line { margin: 0; padding: 8px 10px; font-size: 13px; color: var(--bad-text); background: var(--bad-soft); border-radius: var(--radius-sm); }
+.filters { display: flex; gap: 4px; padding: 3px; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; }
+.filters button { height: 28px; padding: 0 12px; font-size: 13px; font-weight: 500; color: var(--text-muted); background: transparent; border: 0; border-radius: 7px; cursor: pointer; }
+.filters button[aria-pressed="true"] { color: var(--text); background: var(--panel); box-shadow: var(--shadow); }
+
+/* ===== Report ===== */
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.stat { padding: 16px 18px; }
+.stat h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-faint); }
+.stat .big { font: 600 1.7rem/1.1 var(--mono); letter-spacing: -0.02em; }
+.stat .sub { margin-top: 4px; font-size: 13px; color: var(--text-muted); }
+.bars { display: grid; gap: 8px; margin-top: 6px; }
+.bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; font-size: 13px; }
+.bar span:first-child { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .track { grid-column: 1 / -1; height: 6px; background: var(--inset); border-radius: 999px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--accent); border-radius: 999px; transform-origin: left; animation: grow 500ms var(--ease); }
+@keyframes grow { from { transform: scaleX(0); } }
+
+/* ===== Login, skeleton, toasts ===== */
+.login { display: grid; place-items: center; min-height: 100vh; padding: 16px; }
+.login .panel { width: min(400px, 100%); padding: 32px; display: grid; gap: 16px; text-align: center; }
+.login h1 { font-size: 1.3rem; }
+.login p { margin: 0; color: var(--text-muted); font-size: 14px; }
+.skeleton { display: grid; gap: 10px; }
+.skeleton span { display: block; height: 14px; border-radius: 6px; background: linear-gradient(90deg, var(--skeleton), var(--panel-hover), var(--skeleton)); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+.skeleton span:nth-child(2) { width: 85%; } .skeleton span:nth-child(3) { width: 60%; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.toasts { position: fixed; right: 20px; bottom: 20px; z-index: 50; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+.toast { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; font-size: 14px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); animation: toast-in 220ms var(--ease); }
+.toast.ok .icon { color: var(--ok); } .toast.bad .icon { color: var(--bad); }
+.toast.leaving { animation: toast-out 160ms ease-in forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(4px); } }
+.fade-in { animation: fade 200ms var(--ease); }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } }
+
+@media (max-width: 1000px) {
+  .split { grid-template-columns: 1fr; }
+  .list { max-height: none; }
+  .detail { position: static; }
+}
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .brand { padding: 0; flex: 1; }
+  .brand small { display: none; }
+  .nav { grid-auto-flow: column; width: 100%; order: 3; }
+  .nav button { justify-content: center; }
+  .nav .count { margin-left: 2px; }
+  .sidebar-foot { margin: 0; padding: 0; border: 0; }
+  .sidebar-foot .who-label { display: none; }
+  .main { padding: 18px 16px 48px; }
+  .form-row { grid-template-columns: 1fr 1fr; }
+  .form-row .btn { grid-column: 1 / -1; }
+  .hint.keys { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <!-- Lucide icons (ISC licence) -->
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+</svg>
+<div id="root"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<script>
+(() => {
+  "use strict";
+  // config.DOCUMENTS (tests/test_page.py keeps them equal to the main page's list).
+  const DOCUMENTS = [
+    ["esp32_datasheet_en", "ESP32"],
+    ["DS_CD00237391", "STM32F205/207"],
+    ["lm35", "LM35"],
+    ["TCTH022BE_datasheet_en_20230425", "TCTH0xxxE"],
+  ];
+  // config.DIAGNOSES, in order (tests/test_page.py); the first two close the item, the others lead to a note.
+  const DIAGNOSIS_TEXT = {
+    correct: "The answer was correct",
+    not_in_datasheets: "The datasheets do not have it",
+    retrieval_miss: "The right page was not found",
+    misread: "The page was found but misread",
+    false_refusal: "It refused, but a passage has it",
+  };
+  const CLOSING = ["correct", "not_in_datasheets"];
+  const root = document.getElementById("root");
+  let settings = { auth: false };
+  let token = null;
+  // What the page shows, kept between tabs so switching is instant; refreshed in the background.
+  const state = { view: "queue", queue: null, notes: null, report: null, selected: null, notesFilter: "all" };
+
+  // ---------- small helpers: text is always set as text, never parsed as HTML ----------
+  function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value === null || value === undefined || value === false) continue;
+      if (key === "class") node.className = value;
+      else if (key === "text") node.textContent = value;
+      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+      else node.setAttribute(key, value === true ? "" : value);
+    }
+    for (const child of children.flat()) {
+      if (child === null || child === undefined || child === false) continue;
+      node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return node;
+  }
+  function icon(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon");
+    svg.setAttribute("aria-hidden", "true");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#i-" + name);
+    svg.append(use);
+    return svg;
+  }
+  const partOf = (name) => (DOCUMENTS.find(([value]) => value === name) || [name, name])[1];
+  function ago(epoch) {
+    if (!epoch) return "–";
+    const s = Math.max(0, Date.now() / 1000 - epoch);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+    return new Date(epoch * 1000).toLocaleDateString();
+  }
+  function skeleton(lines = 3) { return el("div", { class: "skeleton", "aria-hidden": "true" }, Array.from({ length: lines }, () => el("span"))); }
+
+  function toast(message, kind = "ok") {
+    const node = el("div", { class: `toast ${kind}` }, icon(kind === "ok" ? "check" : "alert"), el("span", { text: message }));
+    document.getElementById("toasts").append(node);
+    setTimeout(() => { node.classList.add("leaving"); setTimeout(() => node.remove(), 170); }, kind === "ok" ? 2600 : 5000);
+  }
+
+  // ---------- theme: dark by default, the choice kept in this browser ----------
+  function storedTheme() { try { return localStorage.getItem("review-theme"); } catch { return null; } }
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("review-theme", theme); } catch { /* private window */ }
+  }
+  setTheme(storedTheme() || "dark");
+
+  // ---------- login: Cognito managed login, authorization code with PKCE (no secret in the page) ----------
+  const redirectUri = location.origin + location.pathname;
+  function base64url(bytes) {
+    return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  async function login() {
+    const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+    const stateParam = base64url(crypto.getRandomValues(new Uint8Array(16)));
+    sessionStorage.setItem("pkce", JSON.stringify({ verifier, state: stateParam }));
+    const challenge = base64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+    const params = new URLSearchParams({ response_type: "code", client_id: settings.client_id, redirect_uri: redirectUri,
+      scope: "openid", code_challenge_method: "S256", code_challenge: challenge, state: stateParam });
+    location.assign(`${settings.domain}/oauth2/authorize?${params}`);
+  }
+  async function finishLogin(code, stateParam) {
+    const saved = JSON.parse(sessionStorage.getItem("pkce") || "{}");
+    sessionStorage.removeItem("pkce");
+    history.replaceState(null, "", location.pathname);
+    if (!saved.verifier || saved.state !== stateParam) throw new Error("The login could not be checked. Log in again.");
+    const response = await fetch(`${settings.domain}/oauth2/token`, {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: settings.client_id, code,
+        redirect_uri: redirectUri, code_verifier: saved.verifier }),
+    });
+    if (!response.ok) throw new Error("The login was refused. Log in again.");
+    const tokens = await response.json();
+    // The access token: API Gateway checks it (client_id), the handler checks its cognito:groups.
+    sessionStorage.setItem("token", JSON.stringify({ access: tokens.access_token,
+      until: Date.now() + (tokens.expires_in - 60) * 1000 }));
+  }
+  function savedToken() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("token") || "null");
+      return saved && saved.until > Date.now() ? saved.access : null;
+    } catch { return null; }
+  }
+  function logout() {
+    sessionStorage.removeItem("token");
+    const params = new URLSearchParams({ client_id: settings.client_id, logout_uri: redirectUri });
+    location.assign(`${settings.domain}/logout?${params}`);
+  }
+
+  // ---------- API ----------
+  async function api(path, body) {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const response = await fetch(`/api/review/${path}`, { method: body === undefined ? "GET" : "POST", headers,
+      body: body === undefined ? undefined : JSON.stringify(body) });
+    let data = null;
+    try { data = await response.json(); } catch { /* CloudFront's HTML error pages */ }
+    if (response.status === 401) { sessionStorage.removeItem("token"); throw new Error("The login expired. Reload the page and log in again."); }
+    if (!response.ok) throw new Error((data && (data.error || data.message)) || `The server answered ${response.status}.`);
+    return data;
+  }
+
+  // ---------- the shell ----------
+  const VIEWS = {
+    queue: { label: "Queue", icon: "inbox", title: "Review queue", lede: "Thumbs-downs waiting for a diagnosis or a note. Comments are the visitor's own words: read them, never paste them into a note." },
+    notes: { label: "Notes", icon: "note", title: "Verified notes", lede: "A published note reaches both pipelines, as a passage citing the page it was checked against." },
+    report: { label: "Report", icon: "chart", title: "Report", lede: "How visitors rate the answers, and what the reviews found." },
+  };
+  let mainNode, counts = {};
+  function shell() {
+    const nav = el("nav", { class: "nav", "aria-label": "Sections" }, Object.entries(VIEWS).map(([name, view]) => {
+      counts[name] = el("span", { class: "count" });
+      return el("button", { type: "button", "aria-current": name === state.view ? "page" : null, "data-view": name,
+        onclick: () => go(name) }, icon(view.icon), view.label, counts[name]);
+    }));
+    const themeButton = el("button", { type: "button", class: "icon-btn", "aria-label": "Switch light or dark theme",
+      title: "Switch theme", onclick: () => { setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"); themeButton.replaceChildren(icon(themeIcon())); } },
+      icon(themeIcon()));
+    const foot = el("div", { class: "sidebar-foot" },
+      el("div", { class: "row" }, el("span", { class: "who-label", text: settings.auth ? "Signed in as reviewer" : "Local server · no login" }),
+        el("span", { class: "inline" }, themeButton,
+          settings.auth ? el("button", { type: "button", class: "icon-btn", "aria-label": "Log out", title: "Log out", onclick: logout }, icon("logout")) : null)));
+    mainNode = el("main", { class: "main", id: "main" });
+    root.replaceChildren(el("div", { class: "shell" },
+      el("aside", { class: "sidebar" },
+        el("a", { class: "brand", href: "/" }, el("span", { class: "brand-mark" }, icon("check")),
+          el("span", {}, "Datasheet Q&A", el("small", { text: "Review" }))),
+        nav, foot),
+      mainNode));
+  }
+  function themeIcon() { return document.documentElement.dataset.theme === "dark" ? "sun" : "moon"; }
+  function setCount(name, n) { if (counts[name]) counts[name].textContent = n ? String(n) : ""; }
+  function go(name) {
+    state.view = name;
+    if (location.hash !== `#${name}`) history.replaceState(null, "", name === "queue" ? location.pathname : `#${name}`);
+    for (const button of root.querySelectorAll(".nav button")) button.toggleAttribute("aria-current", button.dataset.view === name);
+    for (const button of root.querySelectorAll(".nav button[aria-current]")) button.setAttribute("aria-current", "page");
+    render();
+    refresh(name);
+  }
+  function head(name, ...actions) {
+    const view = VIEWS[name];
+    return el("div", { class: "page-head" }, el("div", {}, el("h1", { text: view.title }), el("p", { text: view.lede })),
+      el("div", { class: "inline" }, ...actions,
+        el("button", { type: "button", class: "icon-btn", "aria-label": "Refresh", title: "Refresh", onclick: () => refresh(name, true) }, icon("refresh"))));
+  }
+  function render() { (RENDER[state.view])(); }
+  // Stale-while-revalidate: draw what is known at once, then fetch and draw again.
+  async function refresh(name, announce = false) {
+    try {
+      if (name === "queue") { state.queue = await api("feedback"); setCount("queue", state.queue.items.length); }
+      if (name === "notes") { state.notes = (await api("corrections")).corrections; setCount("notes", state.notes.filter((n) => n.status === "published").length); }
+      if (name === "report") state.report = await api("report");
+      if (state.view === name) render();
+      if (announce) toast("Up to date.");
+    } catch (error) {
+      if (state.view === name && !state[name]) mainNode.replaceChildren(head(name), errorPanel(error, () => refresh(name)));
+      else toast(error.message, "bad");
+    }
+  }
+  function errorPanel(error, retry) {
+    return el("div", { class: "panel empty-state fade-in", role: "alert" }, el("strong", { text: "Could not load this" }),
+      el("span", { text: error.message || String(error) }),
+      retry ? el("button", { type: "button", class: "btn btn-ghost", onclick: retry }, icon("refresh"), "Try again") : null);
+  }
+
+  // ---------- queue ----------
+  function queueItems() { return (state.queue && state.queue.items) || []; }
+  function selectedItem() { return queueItems().find((item) => item.answer_id === state.selected) || queueItems()[0] || null; }
+  function renderQueue() {
+    const items = queueItems();
+    const keys = el("div", { class: "hint keys" }, el("span", { class: "kbd", text: "J" }), el("span", { class: "kbd", text: "K" }), "move",
+      el("span", { class: "sep", text: "·" }), el("span", { class: "kbd", text: "1" }), "–", el("span", { class: "kbd", text: "5" }), "diagnose");
+    if (!state.queue) { mainNode.replaceChildren(head("queue"), el("div", { class: "panel detail" }, skeleton(4))); return; }
+    if (!items.length) {
+      mainNode.replaceChildren(head("queue"), el("div", { class: "panel empty-state fade-in" }, icon("check"),
+        el("strong", { text: "All caught up" }), el("span", { text: "Nothing is waiting for review." })));
+      return;
+    }
+    const current = selectedItem();
+    state.selected = current.answer_id;
+    const list = el("div", { class: "list", role: "listbox", "aria-label": "Waiting for review" }, items.map((item) =>
+      el("button", { type: "button", class: "item", role: "option", "aria-selected": String(item.answer_id === current.answer_id),
+        onclick: () => { state.selected = item.answer_id; renderQueue(); } },
+        el("span", { class: "item-q", text: (item.answer || {}).question || "(no question)" }),
+        el("span", { class: "item-meta" },
+          item.diagnosis ? el("span", { class: "chip warn", text: "needs a note" }) : el("span", { class: "chip bad", text: (item.reason || "no reason").replace(/_/g, " ") }),
+          el("span", { text: (item.answer || {}).pipeline === "kb" ? "AWS managed" : "Custom" }),
+          el("span", { class: "sep", text: "·" }), el("span", { text: ago(item.created_at) })))));
+    mainNode.replaceChildren(head("queue", keys), el("div", { class: "split" }, list, detail(current)));
+  }
+
+  function detail(item) {
+    const answer = item.answer || {};
+    const passages = answer.passages || [];
+    return el("article", { class: "panel detail fade-in", "aria-label": "The rated answer" },
+      el("div", { class: "meta" },
+        el("span", { class: "chip bad", text: "thumbs-down" }),
+        item.reason ? el("span", { class: "chip plain", text: item.reason.replace(/_/g, " ") }) : null,
+        el("span", { text: answer.pipeline === "kb" ? "AWS managed" : "Custom pipeline" }), el("span", { class: "sep", text: "·" }),
+        el("span", { text: answer.document ? partOf(answer.document) : "All datasheets" }), el("span", { class: "sep", text: "·" }),
+        el("span", { text: ago(item.created_at) }),
+        answer.notes && answer.notes.length ? el("span", { class: "chip ok", text: "used a note" }) : null),
+      el("h2", { class: "question", text: answer.question || "" }),
+      el("div", {}, el("p", { class: "section-title", text: "Answer" }), el("p", { class: "answer", text: answer.answer || "" })),
+      el("div", {}, el("p", { class: "section-title", text: "Cited" }), el("div", { class: "sources" },
+        (answer.sources || []).length ? answer.sources.map((s) => el("span", { class: `chip ${s.note ? "ok" : "info"}`,
+          text: `[${s.label}] ${s.note ? "Note · " : ""}${s.part || partOf(s.document)} p.${s.page}` }))
+          : el("span", { class: "meta", text: "Nothing cited" }))),
+      // The visitor's own words: shown as text only, and never given to the model.
+      item.comment ? el("div", { class: "comment" }, el("b", { text: "Visitor's comment" }), item.comment) : null,
+      el("details", { class: "passages" }, el("summary", {}, icon("chevron"), `Passages the model read (${passages.length})`),
+        passages.map((p, i) => el("div", { class: `passage${p.kind === "note" ? " note" : ""}` },
+          el("b", { text: `[${i + 1}] ${p.kind === "note" ? "Verified note · " : ""}${partOf(p.document)} · page ${p.page}` }), p.text))),
+      diagnosisBlock(item),
+      item.status === "diagnosed" && !CLOSING.includes(item.diagnosis) ? noteForm(item) : null);
+  }
+
+  function diagnosisBlock(item) {
+    const note = el("input", { type: "text", maxlength: "500", placeholder: "Why (optional, for the record)", value: item.review_note || "",
+      "aria-label": "Review note" });
+    const buttons = Object.entries(DIAGNOSIS_TEXT).map(([value, text], i) => el("button", { type: "button", class: "choice",
+      "aria-pressed": String(item.diagnosis === value), "data-diagnosis": value, onclick: () => diagnose(item, value, note.value) },
+      el("span", { class: "kbd", text: String(i + 1) }),
+      el("span", {}, text, el("small", { text: CLOSING.includes(value) ? "closes it" : "then write a note" }))));
+    return el("div", {}, el("p", { class: "section-title", text: "What went wrong?" }), el("div", { class: "form-grid" },
+      el("div", { class: "choices" }, buttons), note));
+  }
+
+  async function diagnose(item, diagnosis, reviewNote) {
+    if (diagnose.busy) return;
+    diagnose.busy = true;
+    try {
+      const result = await api(`feedback/${item.answer_id}`, { diagnosis, note: reviewNote });
+      Object.assign(item, result);
+      if (result.status === "closed") {
+        const items = queueItems();
+        const index = items.indexOf(item);
+        items.splice(index, 1);
+        state.selected = (items[index] || items[index - 1] || {}).answer_id || null;
+        setCount("queue", items.length);
+        toast("Closed.");
+      } else {
+        toast("Diagnosed. Write the note below.");
+      }
+      renderQueue();
+    } catch (error) {
+      toast(error.message, "bad");
+    } finally {
+      diagnose.busy = false;
+    }
+  }
+
+  function noteForm(item) {
+    const answer = item.answer || {};
+    // A discarded note comes back filled in, ready to edit.
+    const last = item.last_note || {};
+    const first = last.document ? last : (answer.sources || []).find((s) => !s.note) || {};
+    // Only a datasheet the answer cited, or the one the visitor picked, is offered first; a refusal cites nothing,
+    // so the reviewer must choose (a guessed default is how a note lands on the wrong datasheet).
+    const guess = first.document || answer.document || "";
+    const documentChoice = el("select", { id: "note-doc", required: true },
+      el("option", { value: "", text: "Pick a datasheet…", selected: !guess, disabled: true }),
+      DOCUMENTS.map(([value, text]) => el("option", { value, text, selected: value === guess })));
+    const page = el("input", { type: "number", id: "note-page", min: "1", max: "1000", value: first.page ? String(first.page) : "",
+      placeholder: "e.g. 71" });
+    const pageBox = el("div", { class: "page-box", hidden: true });
+    const showPage = el("button", { type: "button", class: "btn btn-ghost", onclick: async () => {
+      if (!documentChoice.value || !page.value) { toast("Pick a datasheet and a page first.", "bad"); return; }
+      pageBox.hidden = false;
+      pageBox.replaceChildren(skeleton(3));
+      try {
+        const data = await api(`page?${new URLSearchParams({ document: documentChoice.value, page: page.value })}`);
+        pageBox.replaceChildren(
+          el("div", { class: "meta" }, el("strong", { text: `${data.part}, page ${data.page}` }),
+            data.pdf_url ? el("a", { href: data.pdf_url, target: "_blank", rel: "noopener noreferrer", class: "inline" }, "Open the PDF page", icon("external")) : null),
+          data.texts.length ? data.texts.map((t) => el("p", { text: t })) : el("p", { text: "No stored text for this page." }));
+      } catch (error) { pageBox.replaceChildren(el("p", { class: "error-line", text: error.message })); }
+    } }, "Show page");
+    const question = el("input", { type: "text", id: "note-question", maxlength: "500", value: last.question || answer.question || "" });
+    const text = el("textarea", { id: "note-text", maxlength: "1000", placeholder: "The fact as the page states it: value, unit and conditions." });
+    text.value = last.text || "";
+    const counter = el("span", { class: "field-hint", text: `${text.value.length} / 1000` });
+    text.addEventListener("input", () => { counter.textContent = `${text.value.length} / 1000`; });
+    const checked = el("input", { type: "checkbox" });
+    const save = el("button", { type: "submit", class: "btn" }, "Save as draft");
+    const form = el("form", { class: "form-grid", onsubmit: async (event) => {
+      event.preventDefault();
+      if (!documentChoice.value || !page.value) { toast("Pick the datasheet and the page the note was checked against.", "bad"); return; }
+      save.disabled = true;
+      try {
+        await api("corrections", { answer_id: item.answer_id, document: documentChoice.value, page: Number(page.value),
+          question: question.value.trim(), text: text.value, checked: checked.checked });
+        const items = queueItems();
+        items.splice(items.indexOf(item), 1);
+        setCount("queue", items.length);
+        state.selected = (items[0] || {}).answer_id || null;
+        toast("Draft saved. Publish it under Notes.");
+        state.notes = null;
+        go("notes");
+      } catch (error) { toast(error.message, "bad"); save.disabled = false; }
+    } },
+      el("p", { class: "section-title", text: "Write the note" }),
+      el("div", { class: "form-row" },
+        el("label", { class: "field", for: "note-doc" }, "Datasheet", documentChoice),
+        el("label", { class: "field", for: "note-page" }, "PDF page", page), showPage),
+      pageBox,
+      el("label", { class: "field", for: "note-question" }, "Question it answers", question,
+        el("span", { class: "field-hint", text: "Used to match similar questions. The model never sees it." })),
+      el("label", { class: "field", for: "note-text" }, "Note", text, counter),
+      el("label", { class: "check" }, checked, el("span", { text: "I checked this note against that page of the datasheet." })),
+      el("div", {}, save));
+    return el("div", { class: "fade-in" }, form);
+  }
+
+  // Keyboard: J / K move through the queue, 1 to 5 diagnose the open item.
+  document.addEventListener("keydown", (event) => {
+    if (state.view !== "queue" || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement && document.activeElement.tagName)) return;
+    const items = queueItems();
+    if (!items.length) return;
+    const index = Math.max(0, items.findIndex((item) => item.answer_id === state.selected));
+    if (event.key === "j" || event.key === "k") {
+      const next = items[Math.min(items.length - 1, Math.max(0, index + (event.key === "j" ? 1 : -1)))];
+      state.selected = next.answer_id;
+      renderQueue();
+      root.querySelector('.item[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    } else if (/^[1-5]$/.test(event.key)) {
+      diagnose(items[index], Object.keys(DIAGNOSIS_TEXT)[Number(event.key) - 1], "");
+    }
+  });
+
+  // ---------- notes ----------
+  // Both pipelines match a note with the same similarity, so a note is live on both at once. The old Knowledge Base
+  // states ("syncing", "removing") can still be on notes written before 2026-10-28; they are shown as they are.
+  const STATUS = { published: "ok", ingesting: "warn live", publishing: "warn live", draft: "plain", failed: "bad", retracted: "plain" };
+  const SIDE = { ready: "ok", failed: "bad", retracting: "warn" };
+  const SIDE_TEXT = { ready: "live", off: "not set up", failed: "failed", pending: "pending", retracting: "still live: finish the retract" };
+  async function noteAction(note, action, button) {
+    button.disabled = true;
+    try {
+      const record = await api(`corrections/${note.correction_id}/${action}`, {});
+      const index = state.notes.findIndex((n) => n.correction_id === record.correction_id);
+      if (action === "discard") {
+        if (index >= 0) state.notes.splice(index, 1);
+        toast(record.rating_back ? "Discarded. Its thumbs-down is back in the queue for a new note." : "Discarded.");
+        refresh("queue");
+      } else {
+        if (index >= 0) state.notes[index] = record;
+        toast(action === "publish" ? (record.status === "failed" ? record.error : "Published on both pipelines.")
+          : "Retracted. It no longer reaches any answer.", record.status === "failed" ? "bad" : "ok");
+      }
+      setCount("notes", state.notes.filter((n) => n.status === "published").length);
+      renderNotes();
+    } catch (error) {
+      toast(error.message, "bad");
+      // The step may have gone partway (a retract whose database did not answer): show the note as it now is.
+      try {
+        const record = await api(`corrections/${note.correction_id}`);
+        const index = state.notes.findIndex((n) => n.correction_id === record.correction_id);
+        if (index >= 0) state.notes[index] = record;
+        setCount("notes", state.notes.filter((n) => n.status === "published").length);
+        renderNotes();
+      } catch { button.disabled = false; }
+    }
+  }
+  // A retract whose database did not answer: out of the AWS managed side, maybe still live on ours.
+  const unfinishedRetract = (note) => note.status === "retracted" && note.ours && note.ours !== "off";
+  function renderNotes() {
+    const filterButtons = el("div", { class: "filters", role: "group", "aria-label": "Show" },
+      [["all", "All"], ["published", "Published"], ["draft", "Drafts"], ["retracted", "Retracted"]].map(([value, text]) =>
+        el("button", { type: "button", "aria-pressed": String(state.notesFilter === value),
+          onclick: () => { state.notesFilter = value; renderNotes(); } }, text)));
+    if (!state.notes) { mainNode.replaceChildren(head("notes", filterButtons), el("div", { class: "panel note-card" }, skeleton(3))); return; }
+    const shown = state.notes.filter((n) => state.notesFilter === "all" || n.status === state.notesFilter
+      || (state.notesFilter === "draft" && ["draft", "failed", "publishing", "ingesting"].includes(n.status)));
+    if (!shown.length) {
+      mainNode.replaceChildren(head("notes", filterButtons), el("div", { class: "panel empty-state fade-in" }, icon("note"),
+        el("strong", { text: state.notes.length ? "No notes here" : "No notes yet" }),
+        el("span", { text: "Diagnose a thumbs-down in the queue, then write a note." })));
+      return;
+    }
+    mainNode.replaceChildren(head("notes", filterButtons),
+      el("div", { class: "notes" }, shown.map((note) => {
+      // One set of buttons per state: not yet live -> Publish and Discard; publishing or live -> Retract only.
+      const actions = el("span", { class: "inline" });
+      const notLive = ["draft", "failed", "retracted"].includes(note.status);
+      if (notLive) {
+        const b = el("button", { type: "button", class: "btn btn-sm", onclick: () => noteAction(note, "publish", b) }, "Publish");
+        actions.append(b);
+      }
+      if (["published", "ingesting", "publishing"].includes(note.status) || unfinishedRetract(note)) {
+        const b = el("button", { type: "button", class: "btn btn-sm btn-danger", onclick: () => noteAction(note, "retract", b) },
+          unfinishedRetract(note) ? "Finish retract" : "Retract");
+        actions.append(b);
+      }
+      if (notLive) {
+        // Two clicks, no browser dialog: the first arms it for a few seconds.
+        const b = el("button", { type: "button", class: "btn btn-sm btn-ghost",
+          title: "Throw the note away and send its thumbs-down back to the queue" }, "Discard");
+        b.addEventListener("click", () => {
+          if (b.dataset.armed) { noteAction(note, "discard", b); return; }
+          b.dataset.armed = "1";
+          b.textContent = "Click again to discard";
+          setTimeout(() => { delete b.dataset.armed; b.textContent = "Discard"; }, 3500);
+        });
+        actions.append(b);
+      }
+      // Only a published note reaches answers: a side that found its question is "ready, not live" until then.
+      const live = note.status === "published";
+      const sideText = (value) => value === "off" && !live ? "not published" : value === "ready" && !live ? "ready, not live"
+        : SIDE_TEXT[value] || value || "–";
+      const side = (name, value, score) => unfinishedRetract(note) && name === "Custom pipeline"
+        ? el("span", { class: "pipe" }, el("span", { class: "dot warn" }), `${name}: ${SIDE_TEXT.retracting}`)
+        : el("span", { class: "pipe" },
+        el("span", { class: `dot ${value === "ready" && !live ? "" : SIDE[value] || ""}` }),
+        `${name}: ${sideText(value)}`, score ? el("span", { class: "mono", text: ` ${score}` }) : null);
+      return el("article", { class: "panel note-card fade-in" },
+        el("div", { class: "note-head" },
+          el("span", { class: `chip ${STATUS[note.status] || "plain"}`, text: note.status }),
+          el("span", { class: "chip plain", text: `${partOf(note.document)} · p.${note.page}` }),
+          el("span", { class: "meta grow", text: `${DIAGNOSIS_TEXT[note.diagnosis] || ""} · ${ago(note.published_at || note.created_at)}` }),
+          actions),
+        el("p", { class: "note-text", text: note.text }),
+        el("div", { class: "meta", text: `For: ${note.question}` }),
+        el("div", { class: "pipes" }, side("Custom pipeline", note.ours, note.ours_similarity), side("AWS managed", note.kb, note.kb === "ready" ? note.ours_similarity : note.kb_score)),
+        note.error ? el("p", { class: "error-line", text: note.error }) : null);
+    })));
+  }
+
+  // ---------- report ----------
+  function bars(object) {
+    const entries = Object.entries(object || {}).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return el("div", { class: "sub", text: "None yet" });
+    const top = Math.max(...entries.map(([, n]) => n));
+    return el("div", { class: "bars" }, entries.map(([name, n]) => el("div", { class: "bar" },
+      el("span", { text: DIAGNOSIS_TEXT[name] || name.replace(/_/g, " ") }), el("span", { class: "mono", text: String(n) }),
+      el("div", { class: "track" }, el("div", { class: "fill", style: `width:${(n / top) * 100}%` })))));
+  }
+  function renderReport() {
+    if (!state.report) { mainNode.replaceChildren(head("report"), el("div", { class: "stats" }, [1, 2, 3].map(() => el("div", { class: "panel stat" }, skeleton(2))))); return; }
+    const r = state.report;
+    const stat = (title, big, sub, extra) => el("div", { class: "panel stat fade-in" }, el("h3", { text: title }),
+      big !== null ? el("div", { class: "big", text: big }) : null, sub ? el("div", { class: "sub", text: sub }) : null, extra || null);
+    const rate = (p) => p.down_rate === null ? "–" : `${Math.round(p.down_rate * 100)}%`;
+    mainNode.replaceChildren(head("report"), el("div", { class: "stats" },
+      stat("Answers saved", String(r.answers), `${r.answers_with_notes} used a note · kept ${r.kept_days.answers} days`),
+      ...Object.entries(r.pipelines).map(([name, p]) => stat(name === "kb" ? "AWS managed" : "Custom pipeline", rate(p),
+        `thumbs-down rate · ${p.down} of ${p.rated} rated · ${p.answers} answers`)),
+      stat("Answers that used a note", `${r.rated_with_notes.down} / ${r.rated_with_notes.rated}`, "thumbs-down / rated"),
+      stat("Thumbs-down reasons", null, null, bars(r.reasons)),
+      stat("Diagnoses", null, null, bars(r.diagnoses)),
+      stat("Notes", null, null, bars(r.notes))));
+  }
+
+  const RENDER = { queue: renderQueue, notes: renderNotes, report: renderReport };
+
+  // ---------- start ----------
+  function loginScreen(message) {
+    root.replaceChildren(el("div", { class: "login" }, el("div", { class: "panel fade-in" },
+      el("span", { class: "brand-mark", style: "margin:0 auto;width:40px;height:40px" }, icon("lock")),
+      el("h1", { text: "Reviewers only" }),
+      el("p", { text: message || "Log in with a reviewer's account to read the feedback and publish notes." }),
+      el("button", { type: "button", class: "btn", onclick: login }, "Log in"))));
+  }
+  async function start() {
+    try {
+      const response = await fetch("/api/review/config");
+      settings = await response.json();
+      if (!response.ok) throw new Error(settings.error || `The server answered ${response.status}.`);
+      if (settings.auth) {
+        const params = new URLSearchParams(location.search);
+        if (params.get("code")) await finishLogin(params.get("code"), params.get("state"));
+        token = savedToken();
+        if (!token) { loginScreen(); return; }
+      }
+      const fromLink = location.hash.slice(1);
+      if (VIEWS[fromLink]) state.view = fromLink;
+      shell();
+      render();
+      refresh("queue");
+      refresh("notes");
+      if (state.view === "report") refresh("report");
+    } catch (error) {
+      if (settings.auth) loginScreen(error.message);
+      else root.replaceChildren(el("div", { class: "login" }, errorPanel(error, () => location.reload())));
+    }
+  }
+  start();
+})();
+</script>
+</body>
+</html>

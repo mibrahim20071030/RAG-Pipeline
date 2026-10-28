@@ -10,6 +10,10 @@ Postgres restarts.
 Uploads (step 9a): POST /api/uploads makes a place, the page then PUTs the PDF to /api/uploads/<id>/file, and the
 upload is ingested in a background thread on its own connection, for our pipeline only (the Knowledge Base is in the
 cloud). Records are kept in memory, so they go when the server stops; the stored chunks expire after 24 hours.
+
+Feedback (step 9b): answers get an id, POST /api/feedback rates them, and /review.html is the reviewer's page, with
+no login here (only this machine can reach the server). Answers and ratings are kept in memory; notes published from
+here go to the local database's `corrections` table only (the Knowledge Base side is set up in the cloud).
 """
 import argparse
 import contextlib
@@ -21,11 +25,11 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import psycopg
 
-from rag import api, config, db, uploads
+from rag import api, config, db, records, review, uploads
 
 _HTML_HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -45,8 +49,16 @@ class _State:
         self._conn = None
         self._pdf_files = None
         self.uploads = uploads.MemoryStore()
+        self.records = records.MemoryStore()  # answers, ratings and notes (step 9b)
         # ingest(store, upload_id, data, connect) runs one upload; by default in a background thread.
         self.ingest = ingest or _ingest_in_background
+
+    def kb_answer(self, question: str, document: str | None = None) -> dict:
+        """A KB answer with the notes published on this server."""
+        from rag import corrections, kb
+
+        return kb.answer_question(question, document=document,
+                                  notes_fn=lambda q, d: corrections.kb_match(q, d, store=self.records))
 
     def pdf_files(self) -> set[str]:
         """File names of the stored datasheets that are on disk: the only files /pdfs/ serves. Read from the
@@ -120,6 +132,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path in ("/", "/index.html"):
             return self._page()
+        if path == "/review.html":
+            return self._page("review.html")
+        if path.startswith(review.PREFIX):
+            return self._review("GET", path, None)
         if path == "/api/documents":
             return self._documents()
         if path.startswith("/api/uploads/") and path.count("/") == 3:
@@ -150,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json(403, {"error": "Open the page at http://127.0.0.1."})
         path = urlsplit(self.path).path
-        if path not in ("/api/ask", "/api/uploads"):
+        if path not in ("/api/ask", "/api/uploads", "/api/feedback") and not path.startswith(review.PREFIX):
             return self._not_found()
         # A JSON content type cannot be sent across sites without a CORS preflight, which is never answered.
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
@@ -163,14 +179,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "The request body is not valid JSON."})
 
         state: _State = self.server.state
+        if path == "/api/feedback":
+            return self._json(*api.feedback(payload, state.records))
+        if path.startswith(review.PREFIX):
+            return self._review("POST", path, payload)
         if path == "/api/uploads":
             presign = lambda upload_id: {"put_url": f"/api/uploads/{upload_id}/file"}
             return self._json(*api.start_upload(payload, state.uploads, presign))
         start = time.perf_counter()
         try:
             # The kept connection, made only when the question passed its checks; this server never closes it.
+            # KB answers match the notes published on this server (its records), not the deployed ones.
             status, body = state.ask(payload, lambda: contextlib.nullcontext(state.conn()),
-                                     upload_store=state.uploads)
+                                     upload_store=state.uploads, answer_store=state.records,
+                                     kb_answer_fn=state.kb_answer)
         except Exception:  # noqa: BLE001 (any other failure still gets an answer the page can show)
             traceback.print_exc()
             status, body = 500, {"error": "The server hit an unexpected error. Its console has the details."}
@@ -203,8 +225,22 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  upload {upload_id}: {len(raw):,} bytes received", flush=True)
         self._json(202, uploads.public(state.uploads.get(upload_id) or record))
 
-    def _page(self) -> None:
-        page = self.server.state.web_dir / "index.html"
+    def _review(self, method: str, path: str, payload) -> None:
+        """A reviewer route, without a login: only this machine can reach the server."""
+        state: _State = self.server.state
+        if path == review.PREFIX + "config":
+            return self._json(200, {**review.config_body(), "auth": False})
+        query = {name: values[-1] for name, values in parse_qs(urlsplit(self.path).query).items()}
+        deps = review.Deps(store=state.records, open_conn=lambda: contextlib.nullcontext(state.conn()))
+        try:
+            status, body = review.route(method, path, query, payload, "local", deps)
+        except Exception:  # noqa: BLE001 (any other failure still gets an answer the page can show)
+            traceback.print_exc()
+            status, body = 500, {"error": "The server hit an unexpected error. Its console has the details."}
+        self._json(status, body)
+
+    def _page(self, name: str = "index.html") -> None:
+        page = self.server.state.web_dir / name
         if not page.is_file():
             return self._json(500, {"error": f"{page} is missing."})
         self._send(200, page.read_bytes(), "text/html; charset=utf-8", _HTML_HEADERS)

@@ -14,7 +14,7 @@ import psycopg
 import pytest
 
 import handler
-from rag import api, config, costlog, uploads
+from rag import api, config, costlog, records, uploads
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -37,6 +37,7 @@ class Fakes:
         self.connect_error = None
         self.ask_result = (200, {"answer": "35 V [1]", "timings_ms": {"search": 1.0}, "spent_usd": 0.0003})
         self.ask_error = None
+        self.answers = records.MemoryStore()
 
     def connect(self):
         if self.connect_error:
@@ -44,7 +45,8 @@ class Fakes:
         self.conns.append(FakeConnection())
         return self.conns[-1]
 
-    def ask(self, payload, open_conn, upload_store=None):
+    def ask(self, payload, open_conn, upload_store=None, answer_store=None):
+        self.answer_store = answer_store
         with open_conn() as conn:
             self.asked.append((conn, payload))
             if self.ask_error:
@@ -52,7 +54,7 @@ class Fakes:
             return self.ask_result
 
     def call(self, event):
-        return handler.lambda_handler(event, None, connect=self.connect, ask=self.ask)
+        return handler.lambda_handler(event, None, connect=self.connect, ask=self.ask, answers=self.answers)
 
 
 class FakeCounter:
@@ -179,8 +181,8 @@ def real_ask(counter, answer=None):
         return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
                 "cut_off": False, "timings_ms": {"search": 1.0}}
 
-    return lambda payload, open_conn, upload_store=None: api.ask(payload, open_conn, answer_fn, counter,
-                                                               upload_store=upload_store)
+    return lambda payload, open_conn, upload_store=None, answer_store=None: api.ask(
+        payload, open_conn, answer_fn, counter, upload_store=upload_store, answer_store=answer_store)
 
 
 @pytest.fixture
@@ -347,8 +349,8 @@ def test_kb_ask_never_connects_and_logs_its_pipeline(capped, capsys, monkeypatch
         return {"answer": "35 V [1]", "passages": [], "sources": [], "not_contained": False, "invalid": [],
                 "cut_off": False, "timings_ms": {"retrieve": 1.0, "generate": 2.0}}
 
-    capped.ask = lambda payload, open_conn, upload_store=None: api.ask(payload, open_conn, None, capped.counter,
-                                                                       kb_answer)
+    capped.ask = lambda payload, open_conn, upload_store=None, answer_store=None: api.ask(
+        payload, open_conn, None, capped.counter, kb_answer)
     status, body = parsed(capped.call(v2("POST", "/api/ask", json.dumps({"question": "q", "pipeline": "kb"}))))
     assert status == 200 and body["setup"]["pipeline"] == "kb"
     assert capped.conns == []
@@ -417,7 +419,7 @@ def test_ask_passes_the_upload_store_on(fakes):
     store = uploads.MemoryStore()
     seen = {}
 
-    def ask(payload, open_conn, upload_store=None):
+    def ask(payload, open_conn, upload_store=None, answer_store=None):
         seen["store"] = upload_store
         return 200, {}
 
@@ -519,3 +521,84 @@ def test_the_api_zip_never_imports_pdfplumber():
     # The query Lambda has no pdfplumber: importing handler (and through it api, uploads, kb) must not need it.
     code = "import sys, handler; assert 'pdfplumber' not in sys.modules and 'rag.ingest' not in sys.modules"
     subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
+
+
+# ---------------------------------------------------------------- feedback and review (step 9b)
+
+ANSWER_ID = "ab" * 16
+
+
+def reviewer_event(method, path, body=None, groups="[reviewers]", query=None):
+    event = v2(method, path, body)
+    if groups is not None:
+        event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": "user-1", "cognito:groups": groups}}}
+    if query:
+        event["queryStringParameters"] = query
+    return event
+
+
+@pytest.fixture
+def reviewing(fakes, monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_AUTH", True)
+    fakes.answers.put_new(records.FEEDBACK + ANSWER_ID, {"answer_id": ANSWER_ID, "rating": "down", "status": "pending",
+                                                         "created_at": 1, "expires_at": None, "answer": {}})
+    return fakes
+
+
+def review_call(fakes, event):
+    return handler.lambda_handler(event, None, connect=fakes.connect, ask=fakes.ask, answers=fakes.answers)
+
+
+def test_feedback_is_saved_without_the_database(fakes, capsys):
+    fakes.answers.put_new(records.ANSWER + ANSWER_ID, {"question": "q", "expires_at": None})
+    body = json.dumps({"answer_id": ANSWER_ID, "rating": "down", "reason": "wrong", "comment": "secret words"})
+    status, data = parsed(fakes.call(v2("POST", "/api/feedback", body)))
+    assert status == 200 and data == {"ok": True} and fakes.conns == []
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["rating"] == "down" and "secret words" not in json.dumps(line) and ANSWER_ID not in json.dumps(line)
+
+
+def test_feedback_needs_post_and_json(fakes):
+    assert fakes.call(v2("GET", "/api/feedback"))["statusCode"] == 405
+    assert fakes.call(v2("POST", "/api/feedback", "{}", content_type="text/plain"))["statusCode"] == 415
+
+
+def test_review_config_is_public(reviewing):
+    status, data = parsed(review_call(reviewing, reviewer_event("GET", "/api/review/config", groups=None)))
+    assert status == 200 and data["auth"] is True
+
+
+def test_review_needs_the_reviewer_group(reviewing):
+    for groups in (None, "[visitors]", ""):
+        response = review_call(reviewing, reviewer_event("GET", "/api/review/feedback", groups=groups))
+        assert response["statusCode"] == 403
+    assert reviewing.conns == []
+
+
+def test_a_reviewer_sees_the_queue_and_is_logged(reviewing, capsys):
+    status, data = parsed(review_call(reviewing, reviewer_event("GET", "/api/review/feedback")))
+    assert status == 200 and [item["answer_id"] for item in data["items"]] == [ANSWER_ID]
+    line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert line["reviewer"] == "user-1" and line["path"] == "/api/review/..." and reviewing.conns == []
+
+
+def test_a_reviewer_post_needs_json(reviewing):
+    event = reviewer_event("POST", f"/api/review/feedback/{ANSWER_ID}", "{}")
+    event["headers"]["content-type"] = "text/plain"
+    assert review_call(reviewing, event)["statusCode"] == 415
+    event = reviewer_event("POST", f"/api/review/feedback/{ANSWER_ID}", json.dumps({"diagnosis": "correct"}))
+    assert parsed(review_call(reviewing, event))[1]["status"] == "closed"
+
+
+def test_the_page_route_opens_one_connection(reviewing, monkeypatch):
+    monkeypatch.setattr(handler.review.db, "page_chunks", lambda conn, document, page, strategy: ["text"])
+    monkeypatch.setattr(handler.review.db, "list_documents", lambda conn: [{"name": "lm35", "file": "lm35.pdf"}])
+    event = reviewer_event("GET", "/api/review/page", query={"document": "lm35", "page": "4"})
+    status, data = parsed(review_call(reviewing, event))
+    assert status == 200 and data["texts"] == ["text"]
+    assert len(reviewing.conns) == 1 and reviewing.conns[0].closed
+
+
+def test_ask_gets_the_answer_store(fakes):
+    fakes.call(v2("POST", "/api/ask", json.dumps({"question": "q"})))
+    assert fakes.answer_store is fakes.answers

@@ -27,6 +27,7 @@ class FakeConverse:
 def steps(monkeypatch, tmp_path):
     """Fake search and rerank that record their arguments; the cost log in tmp_path."""
     monkeypatch.setattr(config, "COST_LOG", tmp_path / "cost_log.csv")
+    monkeypatch.setattr(config, "CORRECTIONS_ENABLED", False)  # notes have their own tests (test_corrections.py)
     seen = {"order": []}
 
     def fake_search(conn, question, mode="hybrid", n=None, strategy=None, ts_config=None, document=None,
