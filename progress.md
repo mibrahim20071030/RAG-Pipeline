@@ -48,10 +48,10 @@ Next session (Cycle 2):
 - [x] 2026-10-28: retract fix uploaded, Finish retract clicked, q24 asks approved, note republished, after eval
   approved and run (all 24 passed).
 - [x] 2026-10-28: console cleanup of the old notes path.
-- [ ] Remove the Lambda variable `CORRECTION_BUCKET` from `datasheet-rag` (unused).
-- [ ] Step 9b PR: branch, commit, PR, merge.
+- [x] 2026-10-28: `CORRECTION_BUCKET` removed from the Lambda.
+- [x] 2026-10-28: step 9b PR merged (#23, `c70cd7b`).
 - [ ] Read `walkthroughs/Step9b_Walkthrough.pdf` when convenient.
-- [ ] Decide how permanent uploads should work (who sees them; limits).
+- [x] 2026-10-28: permanent uploads skipped.
 - [x] 2026-10-28 (done above): choose how the KB side matches notes (`datasheet-rag/runs/feedback_eval.md`, "Decision pending"); then set the 0.70 threshold in the Lambda and run the "after" eval (about $0.07).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [x] 2026-10-23: cost risk decided: fixes 1 to 5 (step 7b in `CLAUDE.md`).
@@ -261,7 +261,10 @@ Cycle 2 (deploy, UI, report):
 - Step 9b is ready for the human's PR (files listed in the chat).
 - The human asked to make uploads permanent (today they are deleted after 24 h). Options put to the human; not
   decided or built yet. It would be its own step, in plan mode, before 9c so 9c tests it.
-- Still open: remove `CORRECTION_BUCKET` from the Lambda; the human's PR; the permanent-uploads decision; 9c.
+- Permanent uploads: skipped (the human's choice); uploads stay private and are deleted after 24 h.
+- Step 9b merged by the human as PR #23 (`c70cd7b`).
+- `CORRECTION_BUCKET` removed from the Lambda by the human (checked).
+- Still open: 9c in plan mode when the human says so.
 
 ## 2026-10-24 — Session 25: Cycle 2 step 9b (feedback loop) planned and built, waiting for the console work
 

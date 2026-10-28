@@ -270,8 +270,8 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     datasheet and pipeline behind one options button). Walkthrough written: `walkthroughs/Step9a_Walkthrough.pdf`.
   - Closed on 2026-10-24: both Lambda ask caps back to 50 (checked), the tidied page live (equal to the local file
     once line endings are compared the same way), merged as PR #22.
-- Cycle 2 step 9b (feedback loop): BUILT, deployed and tested on 2026-10-28 (single agent, uncommitted in the working
-  tree, waiting for the walkthrough and the human's PR). Plans: `C:\Users\muham\.claude\plans\plan-to-build-9b-effervescent-dream.md`
+- Cycle 2 step 9b (feedback loop): DONE on 2026-10-28 (single agent), deployed, tested on both pipelines, merged as
+  PR #23 (`c70cd7b`). Walkthrough: `walkthroughs/Step9b_Walkthrough.pdf`. Plans: `C:\Users\muham\.claude\plans\plan-to-build-9b-effervescent-dream.md`
   and, for the shared matcher, `C:\Users\muham\.claude\plans\temporal-tinkering-rabbit.md`. Setup:
   `datasheet-rag/runs/feedback_setup.md`. Results: `datasheet-rag/runs/feedback_eval.md`.
   - Built:
@@ -308,14 +308,14 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     - Aurora `corrections` table;
     - Lambda `CORRECTION_MIN_SIMILARITY=0.7`; zip 22,819,901 bytes.
     - The notes bucket and the KB data source `corrections` were deleted on 2026-10-28 (no longer used).
-      `CORRECTION_BUCKET` is still set on the Lambda (unused; to remove).
+      `CORRECTION_BUCKET` was removed from the Lambda the same day.
   - Three notes are published (q08 LM35 p.5, q24 ESP32 p.46, q33 STM32 p.71).
   - Results (12 cases × 2 pipelines): before, 0/3 originals and 1–2/6 paraphrases passed; after, 3/3 and 6/6 on
     both pipelines, each with its own note, and 3/3 negatives with no note. Retract test: q24 refused on both with
     the note retracted, as before it. Step 9b spend about $0.18.
-  - **Next:** the walkthrough (it must include the 2026-10-28 explanation of why a reranker score cannot be a
-    threshold and the cosine can: the human asked), then the human's PR.
-- Then 9c (both tested again), in plan mode, when the human says so.
+- Permanent uploads were considered on 2026-10-28 and skipped (the human's choice): uploads stay private and are
+  deleted after 24 h.
+- Next: 9c (both tested again), in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
