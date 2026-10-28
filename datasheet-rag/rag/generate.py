@@ -202,7 +202,9 @@ _MISSING = re.compile(
     r"|(?:\bnot|n't) (?:mentioned|specified|provided|included|listed|stated|given|found|available)\b"
     r"|\bno (?:information|mention|data|details)\b"
 )
-_SOURCE_MATERIAL = re.compile(r"\b(?:datasheets?|passages?|documents?)\b")
+# "context" only as the model's name for the passages ("in the given context", 9c u4 on the KB pipeline), not "in
+# this context", which ordinary answers use.
+_SOURCE_MATERIAL = re.compile(r"\b(?:datasheets?|passages?|documents?)\b|\b(?:the|given|provided) context\b")
 
 
 def is_not_contained(answer: str, sources: list[dict] | None = None) -> bool:

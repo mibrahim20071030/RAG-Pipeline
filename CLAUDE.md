@@ -315,7 +315,23 @@ This file is the build plan. Read it fully before writing code. Work one layer a
     the note retracted, as before it. Step 9b spend about $0.18.
 - Permanent uploads were considered on 2026-10-28 and skipped (the human's choice): uploads stay private and are
   deleted after 24 h.
-- Next: 9c (both tested again), in plan mode, when the human says so.
+- Cycle 2 step 9c (both tested again): DONE on 2026-10-28 (single agent), waiting for the human's PR. Results in
+  `datasheet-rag/runs/retest_9c.md`; spend about $0.08.
+  - A (free): only q08, q24, q33 and their cases reach 0.70 (q29 next at 0.605).
+  - B, the 49 on the site with notes on (`deployed_eval` passes `notes`, `kb_notes`): 49/49 on both; notes given
+    only to q08, q24, q33 on both; citation hit ours 0.977 (cached 0.953), KB 0.884 (step 8 0.837); answerable
+    refused ours 0/43, KB 1/43; unanswerable 6/6 on both; no KB request connected to Aurora. q24 and q33 fixed on
+    both; the other changes had no note (Nova Lite noise).
+  - C, uploads (`rag/eval/upload_eval.py`, `data/upload_cases.jsonl`): 8/8, including the isolation case u4 (an
+    upload question asked without `upload_id` is refused on both).
+  - Changed on the way: `generate._SOURCE_MATERIAL` also matches "the / given / provided context" (the KB's u4
+    reply); `deployed_eval` gains `compare`, `answer_id` / `notes_used` columns, the Aurora share limited to the step
+    7 passes (`AURORA_PASSES`) and CloudWatch numbers only from rows matched "ok"; `upload_eval run --upload-id`
+    and `rescore`; `multipart` and `settled` in `rag/uploads.py`. Lambda zip 22,831,264 bytes, live (checked).
+  - Code review 1 of 2 done and recorded, 8 of 10 fixed. 1,344 tests pass.
+  - The KB's upload sync took over 15 minutes once (3.5 in 9a); cause unknown (the dev user cannot read ingestion
+    jobs). `upload_eval run --upload-id` reuses an upload.
+- Next: step 10 (the report), in plan mode, when the human says so.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).

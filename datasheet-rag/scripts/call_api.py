@@ -18,7 +18,6 @@ import argparse
 import http.client
 import json
 import os
-import secrets
 import sys
 import time
 import urllib.error
@@ -30,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rag import config, usage  # config also reads .env
+from rag import config, uploads, usage  # config also reads .env
 
 JSON = {"content-type": "application/json"}
 BASES = {"api": ("API_URL", "the API's invoke URL"), "site": ("SITE_URL", "the CloudFront address")}
@@ -80,17 +79,6 @@ def upload_body(filename: str, size: int) -> bytes:
     return json.dumps({"filename": filename, "size": size}).encode()
 
 
-def multipart(fields: dict, data: bytes, filename: str) -> tuple[bytes, str]:
-    """A multipart/form-data body for S3's presigned POST: the form fields, then the file last (S3 requires it)."""
-    boundary = "----datasheet-rag-" + secrets.token_hex(8)
-    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
-             for name, value in fields.items()]
-    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                 f"Content-Type: application/pdf\r\n\r\n".encode() + data + b"\r\n")
-    parts.append(f"--{boundary}--\r\n".encode())
-    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
-
-
 def cmd_upload(path: Path, wait: bool) -> None:
     """One upload as the page makes it: a place from /api/uploads, the file to S3, then the record until ready."""
     data = path.read_bytes()
@@ -101,7 +89,7 @@ def cmd_upload(path: Path, wait: bool) -> None:
     place = json.loads(text)
     if "post" not in place:
         sys.exit("The answer has no presigned POST (a local server wants a PUT instead).")
-    body, content_type = multipart(place["post"]["fields"], data, path.name)
+    body, content_type = uploads.multipart(place["post"]["fields"], data, path.name)
     request = urllib.request.Request(place["post"]["url"], data=body, method="POST",
                                      headers={"content-type": content_type})
     start = time.perf_counter()
@@ -118,8 +106,7 @@ def cmd_upload(path: Path, wait: bool) -> None:
         print(f"  {time.strftime('%H:%M:%S')}  {status}  status {record.get('status')}, ours {record.get('ours')}, "
               f"kb {record.get('kb')}, {record.get('embedded')} of {record.get('chunks')} embedded"
               f"{', ' + record['error'] if record.get('error') else ''}", flush=True)
-        if status != 200 or record.get("status") == "failed" or (
-                record.get("ours") == "ready" and record.get("kb") not in ("waiting", "syncing")):
+        if status != 200 or record.get("status") == "failed" or uploads.settled(record):
             break
 
 

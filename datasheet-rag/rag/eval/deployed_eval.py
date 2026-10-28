@@ -16,6 +16,11 @@ paid calls happen in the Lambda function, whose cost log is in its /tmp: the spe
 
 The `kb` pass (Cycle 2 step 8) sends `"pipeline": "kb"`: no Aurora, so its plan reads nothing from it either. Its
 Retrieve time is stored as search_ms, and its answers are compared with the local KB run (kb_managed).
+
+Step 9c adds the passes `notes` (ours) and `kb_notes` (the KB): the same 49 questions with the reviewers' notes
+published. Each row also gets the answer's `answer_id` and the notes it was given (`notes_used`, read from the
+answer's record in DynamoDB, free). `compare` (free) lists what changed against the pass before the notes:
+    python -m rag.eval.deployed_eval compare                    notes vs cached, kb_notes vs kb
 """
 import argparse
 import csv
@@ -35,15 +40,17 @@ from rag import config, db, rerank, search, usage
 from rag.eval import metrics, questions
 from rag.eval.run_eval import _embed_usd, _median, _read_csv
 
-PASSES = ("first", "cached", "kb")
-KB_PASS = "kb"
+PASSES = ("first", "cached", "kb", "notes", "kb_notes")
+KB_PASSES = ("kb", "kb_notes")  # sent with "pipeline": "kb"; no Aurora
+AURORA_PASSES = ("first", "cached", "cold")  # the runs the ACU-hours of `summary --aurora-acu-hours` were read for
+BEFORE_NOTES = {"notes": "cached", "kb_notes": "kb"}  # each 9c pass and the pass it is compared with
 KB_LOCAL_REFERENCE = "kb_managed"  # the local run of the KB pipeline (rag.eval.kb_eval)
 BASES = {"site": "SITE_URL", "api": "API_URL"}
 COLD_QUESTION = "q01"  # cached since step 4, so a cold trial costs only the answer
 ROW_FIELDS = [
     "id", "type", "pass", "sent_at", "status", "attempts", "attempt_statuses", "first_client_ms", "client_ms",
     "answer", "cited", "not_contained", "invalid", "warnings", "search_ms", "rerank_ms", "generate_ms", "spent_usd",
-    "x_cache", "cf_pop", "error",
+    "x_cache", "cf_pop", "error", "answer_id", "notes_used",
 ]
 LOG_FIELDS = ["request_id", "init_ms", "duration_ms", "billed_ms", "max_memory_mb", "connect_ms", "handler_total_ms",
               "log_cost_usd", "log_match"]
@@ -85,10 +92,13 @@ def _epoch_ms(iso: str) -> float:
 
 
 def send(url: str, question: str, opener=urllib.request.urlopen, clock=time.perf_counter,
-         pipeline: str = "ours") -> dict:
+         pipeline: str = "ours", upload_id: str | None = None) -> dict:
     """One POST /api/ask: status (0 when nothing came back), lower-case headers, parsed body (None when it is not
-    JSON), body text and client ms. Never raises for an HTTP or network error."""
-    body = json.dumps({"question": question, "document": None, "pipeline": pipeline}).encode()
+    JSON), body text and client ms. Never raises for an HTTP or network error. `upload_id` asks about an upload."""
+    payload = {"question": question, "document": None, "pipeline": pipeline}
+    if upload_id:
+        payload["upload_id"] = upload_id
+    body = json.dumps(payload).encode()
     request = urllib.request.Request(url + "/api/ask", data=body, method="POST",
                                      headers={"content-type": "application/json"})
     start = clock()
@@ -165,14 +175,38 @@ def result_row(question: dict, pass_: str, response: dict) -> dict:
         "spent_usd": body.get("spent_usd"),
         "x_cache": response["headers"].get("x-cache"), "cf_pop": response["headers"].get("x-amz-cf-pop"),
         "error": None if ok else (body.get("error") or body.get("message") or response["text"][:200]),
+        "answer_id": body.get("answer_id") if ok else None, "notes_used": None,
     }
 
 
+def notes_used(answer_id: str | None, store=None) -> str | None:
+    """The notes an answer was given, from its record (`answer#<id>`, one DynamoDB read): ids joined by ";", "" for
+    none, None when it cannot be read (no id, no record, or the read failed; printed, never raised)."""
+    if not answer_id:
+        return None
+    from rag import records
+
+    try:
+        record = (store or records.default_store()).get(records.ANSWER + answer_id)
+    except Exception as error:  # noqa: BLE001 (a missing read leaves the column empty; the run goes on)
+        print(f"  could not read the answer record: {type(error).__name__}: {error}")
+        return None
+    return None if record is None else ";".join(record.get("notes") or [])
+
+
 def append_row(path: Path, row: dict) -> None:
+    """Add one row. A file written before a column was added keeps its own header, so its rows stay aligned."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    is_new = not path.exists()
+    is_new = not path.exists() or path.stat().st_size == 0
+    fields = ROW_FIELDS
+    if not is_new:
+        with path.open(newline="", encoding="utf-8") as f:
+            fields = next(csv.reader(f), None) or ROW_FIELDS
+        dropped = [name for name in ROW_FIELDS if name not in fields and row.get(name) not in (None, "")]
+        if dropped:
+            print(f"  {path.name} has no column for {', '.join(dropped)}; those values are not kept.")
     with path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=ROW_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         if is_new:
             writer.writeheader()
         writer.writerow(row)
@@ -192,14 +226,14 @@ def latest_rows(path: Path) -> list[dict]:
 
 
 def run_pass(url: str, questions_: list[dict], pass_: str, path: Path | None = None, sender=send,
-             sleep=time.sleep, clock=time.monotonic, now=_now_iso) -> int:
+             sleep=time.sleep, clock=time.monotonic, now=_now_iso, notes_fn=notes_used) -> int:
     """Ask every question not yet answered in this pass, DEPLOYED_PACE_S apart. Returns the number asked."""
     path = pass_path(pass_) if path is None else path
     done = done_ids(path)
     todo = [question for question in questions_ if question["id"] not in done]
     if len(todo) < len(questions_):
         print(f"{len(questions_) - len(todo)} already answered in {path.name}, {len(todo)} to ask.")
-    if pass_ == KB_PASS:
+    if pass_ in KB_PASSES:
         sender = functools.partial(sender, pipeline="kb")
     last = None
     for number, question in enumerate(todo, start=1):
@@ -210,8 +244,11 @@ def run_pass(url: str, questions_: list[dict], pass_: str, path: Path | None = N
         response = ask_with_retries(url, question["question"], sender, sleep, now)
         last = clock()  # paced from the last send's answer, so a retried question does not shorten the gap
         row = result_row(question, pass_, response)
+        row["notes_used"] = notes_fn(row["answer_id"])
         append_row(path, row)
         shown = f"cites {row['cited'] or '-'}" if row["status"] == 200 else row["error"]
+        if row["notes_used"]:
+            shown += f", notes {row['notes_used']}"
         tries = f" ({row['attempts']} tries)" if row["attempts"] > 1 else ""
         print(f"{number:>2}/{len(todo)} {question['id']} {row['status']} in {row['client_ms'] / 1000:.1f} s{tries}: "
               f"{shown}", flush=True)
@@ -505,7 +542,10 @@ def summary_row(pass_: str, rows: list[dict], truths_by_id: dict, local_by_id: d
     refusals = metrics.refusal_rates(answers, truths) if answered else {}
     compared = [row for row in answered if row["id"] in local_by_id]
     spent = _numbers(answered, "spent_usd")
-    billed = _numbers(rows, "billed_ms")
+    # The CloudWatch numbers only from rows whose log line was matched with equal timings: a "timings differ" row
+    # was paired with someone else's request (one 9c KB row got the previous Aurora connect that way).
+    logged = [row for row in rows if row.get("log_match") in (None, "", "ok")]
+    billed = _numbers(logged, "billed_ms")
     return {
         "pass": pass_, "questions": len(rows), "status_200": len(answered),
         "retried": sum(1 for row in rows if int(row.get("attempts") or 1) > 1),
@@ -518,16 +558,16 @@ def summary_row(pass_: str, rows: list[dict], truths_by_id: dict, local_by_id: d
         "client_ms_p50": percentile(_numbers(rows, "client_ms"), 50),
         "client_ms_p90": percentile(_numbers(rows, "client_ms"), 90),
         "client_ms_max": percentile(_numbers(rows, "client_ms"), 100),
-        "lambda_ms_p50": percentile(_numbers(rows, "duration_ms"), 50),
-        "connect_ms_p50": percentile(_numbers(rows, "connect_ms"), 50),
-        "connect_ms_max": percentile(_numbers(rows, "connect_ms"), 100),
+        "lambda_ms_p50": percentile(_numbers(logged, "duration_ms"), 50),
+        "connect_ms_p50": percentile(_numbers(logged, "connect_ms"), 50),
+        "connect_ms_max": percentile(_numbers(logged, "connect_ms"), 100),
         "search_ms_p50": _median(_numbers(answered, "search_ms")),
         "rerank_ms_p50": _median(_numbers(answered, "rerank_ms")),
         "generate_ms_p50": _median(_numbers(answered, "generate_ms")),
-        "cold_inits": sum(1 for row in rows if row.get("init_ms") not in (None, "")),
+        "cold_inits": sum(1 for row in logged if row.get("init_ms") not in (None, "")),
         "model_usd_total": sum(spent),
         "model_usd_per_query": sum(spent) / len(spent) if spent else None,
-        "log_cost_usd_total": sum(_numbers(rows, "log_cost_usd")) if any(row.get("request_id") for row in rows)
+        "log_cost_usd_total": sum(_numbers(logged, "log_cost_usd")) if any(row.get("request_id") for row in logged)
         else None,
         "lambda_usd_per_query": sum(lambda_usd(ms) for ms in billed) / len(billed) if billed else None,
         "api_usd_per_query": config.HTTP_API_USD_PER_REQUEST,
@@ -555,14 +595,36 @@ def summarise(questions_: list[dict], aurora_acu_hours: float | None) -> list[di
     # Every cold trial asks the same question, so each of its rows counts; a pass keeps the last row per question.
     by_pass = {pass_: latest_rows(pass_path(pass_)) for pass_ in PASSES}
     by_pass["cold"] = _read_csv(pass_path("cold"))
-    total = sum(len(rows) for pass_, rows in by_pass.items() if pass_ != KB_PASS)
+    # The ACU-hours were read for the step 7 runs, so only those passes share them.
+    total = sum(len(rows) for pass_, rows in by_pass.items() if pass_ in AURORA_PASSES)
     aurora = (aurora_acu_hours * config.AURORA_USD_PER_ACU_HOUR / total
               if aurora_acu_hours is not None and total else None)
-    # The KB pass never touches Aurora, so it carries no Aurora share, and it is compared with the local KB run.
-    summary = [summary_row(pass_, rows, truths_by_id, local_kb if pass_ == KB_PASS else local_by_id,
-                           None if pass_ == KB_PASS else aurora)
+    # A KB pass never touches Aurora, so it carries no Aurora share, and it is compared with the local KB run.
+    summary = [summary_row(pass_, rows, truths_by_id, local_kb if pass_ in KB_PASSES else local_by_id,
+                           aurora if pass_ in AURORA_PASSES else None)
                for pass_, rows in by_pass.items() if rows]
     return [local_row(questions_), *summary]
+
+
+def compare(pass_: str, before: str, truths_by_id: dict) -> list[dict]:
+    """Per question answered in both passes: whether the answer changed (refusal or cited pages), and whether it
+    was right before and after: a correct page cited for a question with an answer, a refusal for one without.
+    Read from the two pass files, no call."""
+    earlier = {row["id"]: row for row in latest_rows(pass_path(before))}
+    changes = []
+    for row in latest_rows(pass_path(pass_)):
+        old = earlier.get(row["id"])
+        if old is None or str(row["status"]) != "200" or str(old["status"]) != "200":
+            continue
+        truths = truths_by_id[row["id"]]
+        hit = {name: (metrics.citation_hit_rate([_answer(r)], [truths]) == 1.0 if truths
+                      else _flag(r.get("not_contained")))
+               for name, r in (("before", old), ("after", row))}
+        changes.append({"id": row["id"], "changed": not same_answer(row, old), "hit_before": hit["before"],
+                        "hit_after": hit["after"], "refused_before": _flag(old.get("not_contained")),
+                        "refused_after": _flag(row.get("not_contained")), "notes_used": row.get("notes_used") or "",
+                        "cited_before": old.get("cited") or "", "cited_after": row.get("cited") or ""})
+    return changes
 
 
 def _shown(value) -> str:
@@ -596,6 +658,7 @@ def main(argv: list[str]) -> None:
     cold.add_argument("--base", choices=list(BASES), default="site")
     cold.add_argument("--yes", action="store_true")
     sub.add_parser("logs", help="free: join Lambda's CloudWatch lines to every pass file")
+    sub.add_parser("compare", help="free: what each 9c pass changed against the pass before the notes")
     summary = sub.add_parser("summary", help=f"free: write {config.RESULTS_DEPLOYED.name}")
     summary.add_argument("--aurora-acu-hours", type=float, help="ACU-hours read in the RDS console for the runs")
     args = parser.parse_args(argv)
@@ -604,7 +667,7 @@ def main(argv: list[str]) -> None:
     if args.command in ("plan", "run"):
         done = set() if args.command == "plan" else done_ids(pass_path(args.pass_))
         todo = [q for q in questions_ if q["id"] not in done]
-        if args.pass_ == KB_PASS:
+        if args.pass_ in KB_PASSES:
             plan_ = plan_kb_pass(todo)
             print_kb_plan(plan_)
         else:
@@ -648,6 +711,21 @@ def main(argv: list[str]) -> None:
                 for row in rows:
                     counts[row["log_match"]] = counts.get(row["log_match"], 0) + 1
                 print(f"{pass_}: {len(rows)} rows, matches {counts}")
+    elif args.command == "compare":
+        truths_by_id = {question["id"]: question["sources"] for question in questions_}
+        for pass_, before in BEFORE_NOTES.items():
+            if not pass_path(pass_).exists():
+                continue
+            changes = compare(pass_, before, truths_by_id)
+            changed = [c for c in changes if c["changed"]]
+            fixed = sum(1 for c in changes if c["hit_after"] and not c["hit_before"])
+            lost = sum(1 for c in changes if c["hit_before"] and not c["hit_after"])
+            print(f"\n{pass_} vs {before}: {len(changes)} questions, {len(changed)} changed, {fixed} now right, "
+                  f"{lost} no longer right; notes used on {[c['id'] for c in changes if c['notes_used']]}")
+            for c in changed:
+                print(f"  {c['id']}: right {c['hit_before']} -> {c['hit_after']}, refused {c['refused_before']} -> "
+                      f"{c['refused_after']}, cited [{c['cited_before']}] -> [{c['cited_after']}]"
+                      + (f", notes {c['notes_used']}" if c["notes_used"] else ""))
     else:
         rows = summarise(questions_, args.aurora_acu_hours)
         config.RESULTS_DEPLOYED.parent.mkdir(parents=True, exist_ok=True)

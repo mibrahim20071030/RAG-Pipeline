@@ -453,3 +453,104 @@ def test_kb_plan_reads_only_the_kb_counter(monkeypatch):
     plan = de.plan_kb_pass([QUESTION] * 3)                    # never a second Retrieve
     assert plan["retrieve_calls"] == 3 and plan["embed_calls"] == 3 and plan["cost"]["embed"] > 0
     assert plan["daily_left"] == config.DEPLOYED_KB_DAILY_LIMIT - 7
+
+
+# --- step 9c: the passes with notes ---------------------------------------------------------------------------
+
+
+def test_a_notes_pass_records_the_answer_id_and_its_notes(tmp_path):
+    from rag import records
+
+    store = records.MemoryStore()
+    store.put_new(records.ANSWER + "ab" * 16, {"notes": ["n1"], "expires_at": None})
+    body = {**OK_BODY, "answer_id": "ab" * 16}
+    path = tmp_path / "notes.csv"
+    de.run_pass("u", [QUESTION], "notes", path, Sender(response(200, body)), lambda s: None, lambda: 0.0,
+                clock_now(), notes_fn=lambda answer_id: de.notes_used(answer_id, store))
+    [row] = de._read_csv(path)
+    assert row["answer_id"] == "ab" * 16 and row["notes_used"] == "n1"
+
+
+def test_notes_used_is_empty_for_none_and_unknown_when_unreadable():
+    from rag import records
+
+    store = records.MemoryStore()
+    store.put_new(records.ANSWER + "cd" * 16, {"notes": [], "expires_at": None})
+    assert de.notes_used("cd" * 16, store) == ""
+    assert de.notes_used("ef" * 16, store) is None and de.notes_used(None, store) is None
+
+    class Down:
+        def get(self, key):
+            raise RuntimeError("no table")
+
+    assert de.notes_used("cd" * 16, Down()) is None  # printed, not raised
+
+
+def test_the_kb_notes_pass_asks_the_kb_pipeline(tmp_path):
+    seen = {}
+
+    def sender(url, question, pipeline="ours"):
+        seen["pipeline"] = pipeline
+        return response(200, OK_BODY)
+
+    de.run_pass("u", [QUESTION], "kb_notes", tmp_path / "kb_notes.csv", sender, lambda s: None, lambda: 0.0,
+                clock_now(), notes_fn=lambda answer_id: None)
+    assert seen["pipeline"] == "kb"
+
+
+def test_a_row_added_to_an_older_file_keeps_its_header(tmp_path):
+    path = tmp_path / "cached.csv"
+    old = [field for field in de.ROW_FIELDS if field not in ("answer_id", "notes_used")]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        csv.DictWriter(f, fieldnames=old).writeheader()
+    de.append_row(path, {"id": "q01", "status": 200, "answer_id": "x", "notes_used": "n1"})
+    with path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == old and len(rows[1]) == len(old)
+
+
+def test_compare_lists_what_the_notes_changed(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DEPLOYED_DIR", tmp_path)
+    base = {"status": 200, "not_contained": False}
+    for pass_, cited, refused, notes in (("cached", "", True, ""), ("notes", "lm35:5", False, "n1")):
+        de.append_row(de.pass_path(pass_), {**base, "id": "q08", "cited": cited, "not_contained": refused,
+                                             "notes_used": notes})
+        de.append_row(de.pass_path(pass_), {**base, "id": "q01", "cited": "lm35:4"})
+    changes = {c["id"]: c for c in de.compare("notes", "cached", {"q08": [("lm35", 5)], "q01": [("lm35", 4)]})}
+    assert changes["q08"]["changed"] and not changes["q08"]["hit_before"] and changes["q08"]["hit_after"]
+    assert changes["q08"]["notes_used"] == "n1" and changes["q08"]["refused_before"]
+    assert not changes["q01"]["changed"] and changes["q01"]["hit_after"]
+
+
+def test_only_the_step7_passes_share_the_aurora_hours(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DEPLOYED_DIR", tmp_path / "deployed")
+    monkeypatch.setattr(config, "EVAL_DIR", tmp_path / "eval")  # no local reference runs
+    for pass_ in ("first", "notes"):
+        de.append_row(de.pass_path(pass_), {"id": "q01", "status": 200, "cited": "lm35:4", "not_contained": False})
+    rows = {row["pass"]: row for row in de.summarise([QUESTION], aurora_acu_hours=1.0)}
+    assert rows["first"]["aurora_usd_per_query"] == pytest.approx(config.AURORA_USD_PER_ACU_HOUR)
+    assert rows["notes"]["aurora_usd_per_query"] is None
+
+
+def test_compare_counts_a_refusal_lost_on_a_question_with_no_answer(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DEPLOYED_DIR", tmp_path)
+    de.append_row(de.pass_path("cached"), {"id": "q44", "status": 200, "cited": "", "not_contained": True})
+    de.append_row(de.pass_path("notes"), {"id": "q44", "status": 200, "cited": "lm35:5", "not_contained": False})
+    [change] = de.compare("notes", "cached", {"q44": []})
+    assert change["changed"] and change["hit_before"] and not change["hit_after"]
+
+
+def test_an_empty_file_gets_a_header(tmp_path):
+    path = tmp_path / "notes.csv"
+    path.write_text("", encoding="utf-8")
+    de.append_row(path, {"id": "q01", "status": 200})
+    assert de._read_csv(path)[0]["id"] == "q01"
+
+
+def test_a_log_line_matched_with_other_timings_is_left_out_of_the_log_numbers():
+    rows = [{"id": "q01", "status": "200", "cited": "lm35:4", "not_contained": "False", "log_match": "ok",
+             "connect_ms": "", "duration_ms": "900"},
+            {"id": "q02", "status": "200", "cited": "lm35:4", "not_contained": "False",
+             "log_match": "timings differ", "connect_ms": "115", "duration_ms": "100"}]
+    row = de.summary_row("kb_notes", rows, {"q01": [("lm35", 4)], "q02": [("lm35", 4)]}, {}, None)
+    assert row["connect_ms_max"] is None and row["lambda_ms_p50"] == 900
