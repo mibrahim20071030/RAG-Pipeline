@@ -320,7 +320,10 @@ Cycle 2 (deploy, UI, report):
   (22,831,264 bytes) for the human to upload; the page reads `not_contained` from the API, so it needs no change.
 - The human uploaded the zip and set both caps back to 50; Claude checked both (code 22,831,264 bytes; caps 50 / 50).
 - Write-up: `datasheet-rag/runs/retest_9c.md`; `CLAUDE.md` marks 9c done. 9c spend about $0.08.
-- Still open: the chat walkthrough of 9c; the human's PR; then step 10 in plan mode.
+- 9c walkthrough given in the chat, then written as a PDF at the human's request:
+  `walkthroughs/Step9c_Walkthrough.pdf`, 5 pages (why, parts A to C, how to read them, privacy and u4, tools,
+  problems, spend, how to explain it). Built with ReportLab in a scratch venv, like 9b.
+- Still open: the human's PR; then step 10 in plan mode.
 
 ## 2026-10-24 — Session 25: Cycle 2 step 9b (feedback loop) planned and built, waiting for the console work
 
