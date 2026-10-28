@@ -52,6 +52,10 @@ Next session (Cycle 2):
 - [x] 2026-10-28: step 9b PR merged (#23, `c70cd7b`).
 - [ ] Read `walkthroughs/Step9b_Walkthrough.pdf` when convenient.
 - [x] 2026-10-28: permanent uploads skipped.
+- [x] 2026-10-28: step 9c plan approved.
+- [x] 2026-10-28: both caps raised to 60 for the 9c runs; Parts B and C run.
+- [x] 2026-10-28: the "context" fix zip uploaded and both caps back to 50 (checked).
+- [ ] Step 9c PR: branch, commit, PR, merge.
 - [x] 2026-10-28 (done above): choose how the KB side matches notes (`datasheet-rag/runs/feedback_eval.md`, "Decision pending"); then set the 0.70 threshold in the Lambda and run the "after" eval (about $0.07).
 - [x] 2026-10-18: step 7 PR merged (#18, `d41d176`).
 - [x] 2026-10-23: cost risk decided: fixes 1 to 5 (step 7b in `CLAUDE.md`).
@@ -264,7 +268,59 @@ Cycle 2 (deploy, UI, report):
 - Permanent uploads: skipped (the human's choice); uploads stay private and are deleted after 24 h.
 - Step 9b merged by the human as PR #23 (`c70cd7b`).
 - `CORRECTION_BUCKET` removed from the Lambda by the human (checked).
-- Still open: 9c in plan mode when the human says so.
+- **Step 9c started** (plan approved: `C:\Users\muham\.claude\plans\temporal-tinkering-rabbit.md`, single agent).
+  - Built: `deployed_eval` passes `notes` and `kb_notes` (`KB_PASSES`), row fields `answer_id` and `notes_used`
+    (read from the answer's DynamoDB record), a free `compare` command, the Aurora share limited to the step 7
+    passes (`AURORA_PASSES`), and `append_row` keeping an older file's header; `send` takes `upload_id`.
+    New `rag/eval/upload_eval.py` and `data/upload_cases.jsonl` (4 cases from the 9a checks); `call_api.py` now
+    imports its `multipart` from there. Tests: 6 in `test_deployed_eval.py`, `tests/test_upload_eval.py` (8).
+    1,330 pass. Code review running.
+  - Part A (free): only q08, q24, q33 and their own cases reach 0.70; closest other frozen question q29 at 0.605,
+    highest negative c33n at 0.680. Written to `runs/feedback/similarities_shared.csv`.
+  - Plans printed: `notes` $0.0131, `kb_notes` $0.0588, 17 minutes each; both caps at 1 of 50 today.
+- Code review 1 of 2 for 9c done and recorded (10 findings). Fixed 8:
+  - `upload_eval`: network errors give status 0 instead of crashing; asks go through
+    `deployed_eval.ask_with_retries` (retries, stop at the daily cap); rows are appended as they arrive, with the
+    run's `upload_id`; notes that cannot be read fail a curated case instead of passing it; the wait stops on a
+    refused poll or a failed KB side.
+  - `compare` counts a no-answer question that stopped being refused as lost; `append_row` gives an empty file a
+    header and warns when an older file has no column for a value.
+  - `multipart` and the ready rule (`settled`) now live in `rag/uploads.py`, shared by `call_api.py` and
+    `upload_eval`, so the smoke-test script no longer imports the eval stack.
+  - Not fixed, with reasons: the remaining copy of the upload POST and poll in `call_api.py` (one script, one
+    eval; the shared parts are now shared); the 9c passes show no Aurora share and their `same_as_local` compares
+    with a local run without notes (both stated in the write-up instead).
+- Problem: the Bash heredoc turned the `\r\n` escapes of the moved `multipart` into real line breaks, breaking
+  `rag/uploads.py`. Why: the shell expanded them before Python saw the text. Fix: rewritten from Python with the
+  backslashes built explicitly; ruff and the tests pass.
+- Problem: a test wrote fake rows into the real `runs/deployed/uploads.csv` (the run now appends as it goes). Fix:
+  the tests write to a temp file; the stray file (test rows only) was deleted.
+- 1,336 tests pass.
+- The human raised both caps to 60 (checked) and approved the paid runs.
+- **Part B done** ($0.072): `notes` and `kb_notes` 49/49 status 200. Notes were given only to q08, q24, q33, on
+  both pipelines. Citation hit: ours 0.977 (cached 0.953), AWS managed 0.884 (step 8 0.837); unanswerable refused
+  6/6 on both; answerable refused ours 0/43, KB 1/43. `compare`: on ours q24 and q33 went from refused to right;
+  q22 lost its page with no note (the prompt is unchanged for it, so Nova Lite noise); on the KB q24 and q33 fixed,
+  q13 gained and q12 lost, both without a note.
+- Problem: `kb_notes` showed one Aurora connect (115 ms). Why: that row's CloudWatch line was paired with the
+  previous request (the last `notes` ask), flagged "timings differ". Fix: `summary_row` takes the log numbers only
+  from rows matched "ok" (1 new test); no KB request connected.
+- **Part C stopped:** the upload `2c005c8d02d6abac` was ready on ours in under 2 minutes, but the KB side stayed
+  "syncing" past the 15-minute wait (job `TVIH4KI3QK`; 9a took 3.5 minutes). No error in the Lambda log; the dev
+  user cannot read the job. Guess, not verified: the KB was still deleting the `corrections` data source. No asks
+  were made. `upload_eval run --upload-id` now reuses an upload (1 new test), so no second upload is needed.
+- The human synced `uploads` in the console (the `corrections` data source was already gone); the upload's own
+  job then reported complete and the record moved to `kb: ready` by itself. The cause of the slow sync is unknown.
+- **Part C done** on the same upload (`--upload-id`, $0.0076): ours 4/4; KB 3/4. The KB's u4 reply ("Sorry, I
+  cannot find a relevant answer in the given context.") cited nothing and said nothing from the upload, so
+  isolation held; it was scored as an answer because the refusal rule did not know "context".
+- Fix (the human chose option 1): `generate._SOURCE_MATERIAL` also matches "the / given / provided context" (not
+  "in this context"); 3 new test cases. `rescore_refusals.py`: no saved eval answer changes. New free
+  `upload_eval rescore` (1 test): kb u4 now passes, so Part C is 8/8. 1,344 tests pass. Zip rebuilt
+  (22,831,264 bytes) for the human to upload; the page reads `not_contained` from the API, so it needs no change.
+- The human uploaded the zip and set both caps back to 50; Claude checked both (code 22,831,264 bytes; caps 50 / 50).
+- Write-up: `datasheet-rag/runs/retest_9c.md`; `CLAUDE.md` marks 9c done. 9c spend about $0.08.
+- Still open: the chat walkthrough of 9c; the human's PR; then step 10 in plan mode.
 
 ## 2026-10-24 — Session 25: Cycle 2 step 9b (feedback loop) planned and built, waiting for the console work
 

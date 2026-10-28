@@ -178,6 +178,9 @@ REWORDED_REFUSALS = [
     "The provided datasheets don’t contain the price.",  # a curly apostrophe
     "The price isn't mentioned in the datasheets.",
     "This cannot be determined from the passages.",
+    # The real one from step 9c: u4 on the AWS managed pipeline, 2026-10-28.
+    "Sorry, I cannot find a relevant answer in the given context.",
+    "The provided context does not mention the price.",
 ]
 
 
@@ -199,6 +202,7 @@ def test_a_reworded_refusal_that_cites_a_passage_is_an_answer(answer):
     "The datasheet gives a supply range of 4 V to 30 V.",  # names the datasheet, says nothing is missing
     "The ESP32 has 520 KB of SRAM.",
     "The LM35 output is not provided with short-circuit protection.",  # "provided" alone must not name the source
+    "In this context, the output is not provided with short-circuit protection.",  # "this context" is not the source
 ])
 def test_an_uncited_statement_is_not_a_refusal(answer):
     # Scored with no sources, the hardest case: only the wording decides.

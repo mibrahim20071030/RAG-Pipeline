@@ -76,6 +76,24 @@ def public(record: dict) -> dict:
     return {key: record.get(key) for key in PUBLIC_FIELDS}
 
 
+def settled(record: dict) -> bool:
+    """For a client following an upload: our pipeline can answer and the KB is no longer working on it (ready,
+    failed or off). Used by scripts/call_api.py and rag/eval/upload_eval.py."""
+    return record.get("ours") == "ready" and record.get("kb") not in ("waiting", "syncing")
+
+
+def multipart(fields: dict, data: bytes, filename: str) -> tuple[bytes, str]:
+    """A client's multipart/form-data body for S3's presigned POST: the form fields, then the file last (S3
+    requires it)."""
+    boundary = "----datasheet-rag-" + secrets.token_hex(8)
+    parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+             for name, value in fields.items()]
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                 f"Content-Type: application/pdf\r\n\r\n".encode() + data + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 def kb_configured() -> bool:
     """True when an upload can also go to the Knowledge Base: its uploads data source and the bucket are set, and so
     is the curated data source, whose filter is all that keeps uploads out of the searches that name no document."""
