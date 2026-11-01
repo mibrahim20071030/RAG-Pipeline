@@ -182,13 +182,79 @@ Cycle 2 (deploy, UI, report):
 - [x] 5. API Gateway. Done on 2026-10-17 (`runs/api_gateway.md`); PR #16 merged.
 - [x] 6. Frontend. Done on 2026-10-18 (`runs/frontend_deploy.md`): CloudFront + private S3, `/api/*` through CloudFront, vendor PDF links; PR #17 merged.
 - [x] 7. Deployed evaluation. Done on 2026-10-18 (`runs/deployed_eval.md`); PR #18 merged.
-- [ ] 7b. Close the Aurora cost risk: check requests before connecting, delete `GET /api/documents`, daily counter in DynamoDB, lower cap, off switch (added 2026-10-23).
-- [ ] 8. Knowledge Base pipeline built in full behind the same page (toggle), then both pipelines tested on the 49 questions (added 2026-10-16, widened 2026-10-23).
-- [ ] 9a. PDF upload on both pipelines (added 2026-10-23).
-- [ ] 9b. Feedback loop on both pipelines (added 2026-10-22).
-- [ ] 9c. Both pipelines tested again.
-- [ ] 10. Evaluation report (including the comparison and the feedback loop) and recorded demo.
+- [x] 7b. Close the Aurora cost risk. Done on 2026-10-23 (`runs/cost_fix.md`); PR #19 merged.
+- [x] 8. Knowledge Base pipeline behind the same page (toggle), both tested on the 49. Done on 2026-10-24; PR #20 merged.
+- [x] 9a. PDF upload on both pipelines. Done on 2026-10-24; PR #22 merged.
+- [x] 9b. Feedback loop on both pipelines. Done on 2026-10-28; PR #23 merged.
+- [x] 9c. Both pipelines tested again. Done on 2026-10-28; PR #24 merged.
+- [x] 10. Evaluation report and README. Done on 2026-11-01; no demo GIF (the human's choice), the README shows a
+  fresh screenshot of the live site instead.
 - [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+
+## 2026-11-01 — Session 30: README finished and step 10 published
+
+- Listed what is left for the human (step 10 PR, teardown, Billing checks; optional walkthroughs, long-idle cold
+  trial, branch `cycle-2.9c`, RAGAS on KB answers, a second fixed-size KB).
+- Decision (the human): no demo GIF. The README header stays a screenshot of the site answering a question.
+- Retook `docs/ui.png` from the live site (the old one showed the Layer 8b page, before the toggle, upload and
+  ratings): "How much on-chip SRAM does the ESP32 have?" answered 520 KB citing ESP32 page 26. One cached ask, about
+  $0.0003.
+- `REPORT.md`: the "Demo" section is now "Web Interface" with the screenshot.
+- Committed and pushed the step 10 files straight to `main` at the human's request. `datasheet-rag/runs/demo_script.md`
+  was left out (there is no demo to script).
+- Problem: the first ask got "The database did not answer". Why: Aurora was paused and took longer to resume than the
+  Lambda's 22 s connect timeout. Fix: none needed; "Try again" a few seconds later answered. Nothing is paid
+  for when the connect fails.
+- Checklist: Cycle 2 steps 7b to 10 ticked. Open: step 11 teardown, then the Billing checks.
+
+## 2026-10-31 — Session 29: feedback loop explained
+
+- Question and answer only; no code changed and no paid call made.
+- Walked the human through the step 9b feedback loop from the code (`rag/api.py` `feedback`, `rag/review.py`,
+  `rag/corrections.py`, `rag/records.py`): saved answers, 👎 / 👍 ratings (comment never reaches the model), the
+  five diagnoses (two close the item), draft notes tied to a checked datasheet page, publish with the self-check at
+  0.70, matching on both pipelines (pgvector for ours, `notes#list` in DynamoDB for the AWS managed side), retract,
+  and the results and limits.
+- Problems: none.
+- Checklist unchanged. Open as before: the demo GIF, then step 11. Offered next: one note's full journey (q24).
+
+## 2026-10-29 — Session 28: README edits brought into the rest
+
+- The human rewrote `README.md` shorter and made both diagrams: `docs/architecture.png` (updated, adds the feedback
+  band) and `docs/Deployment.png` (new).
+- Fixed: the README linked `docs/deployment.png`, but the file is `Deployment.png`. Windows ignores the case, GitHub
+  does not, so the image would have been broken on GitHub. The link now uses the file's name.
+- `REPORT.md`: the Mermaid diagram replaced by both images; the demo link placeholder replaced by a comment for the GIF.
+- `demo_script.md`: written for a GIF (no sound, captions, size tips, `docs/demo.gif` under the README title).
+- The architecture's C3 card said notes were "saved in DynamoDB, shared by both pipelines"; the human corrected it
+  to "Matched from Aurora (custom) or DynamoDB (AWS managed)" (checked).
+- Open: the demo GIF, then step 11.
+
+## 2026-10-29 — Session 27: step 10, the report
+
+- Planned in plan mode; plan approved: `C:\Users\muham\.claude\plans\plan-to-build-the-sequential-pearl.md`.
+- The human's choices: `REPORT.md` at the repo root, Markdown only; README updated for Cycle 2 **in the human's own
+  style** (their PR #11 rewrite; Claude's first README did not match it); the human records the demo from Claude's
+  shot list; the human builds the final charts and diagrams from Claude's brief.
+- Built (no paid or cloud call):
+  - `REPORT.md`: summary, system and deployment (Mermaid), question set and metrics, setup choice, deployed eval,
+    custom vs AWS managed, upload, feedback loop, failure analysis, cost, 7 root-cause items, what was learned,
+    limits, future work.
+  - `README.md`: status, overview, key results, AWS architecture, tech stack (1,344 tests), deployed results,
+    custom vs AWS managed, upload and feedback, two new root-cause items, limits and future work without the done
+    items, deployed API routes, a link to the report.
+  - `datasheet-rag/runs/demo_script.md`: 11 shots, about 8 asks and 1 upload.
+  - Figure brief in the chat (5 figures, with the numbers).
+- Checks: every relative link resolves; no endpoint, account ID or `SITE_URL` in the files; numbers taken from
+  `results*.csv`, `runs/deployed`, `runs/feedback/summary.csv` and the write-ups; writing-guidelines scan (no em
+  dashes, filler words or unit spacing issues; ACU and MRR spelled out). `tools/checks.py`: secrets, ruff and
+  pytest ok.
+- Spend recorded in the report: local cost log $2.55 in total ($2.25 for the local build and evaluation); Cycle 2
+  model calls about $0.60 from the step write-ups; Aurora $0.19 during step 7.
+- The human read the Billing total: $4.95 for all AWS charges; added to `REPORT.md` and `README.md`.
+- The human shared `Architecture.pdf` (the README's diagram, same as `docs/architecture.png`) as the style for the
+  new figures; the figure brief now follows its layout.
+- Open: the demo recording and its link (placeholders in both files). Then step 11, teardown.
 
 ## 2026-10-28 — Session 26: step 9b, one note matcher for both pipelines
 

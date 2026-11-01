@@ -331,7 +331,23 @@ This file is the build plan. Read it fully before writing code. Work one layer a
   - Code review 1 of 2 done and recorded, 8 of 10 fixed. 1,344 tests pass.
   - The KB's upload sync took over 15 minutes once (3.5 in 9a); cause unknown (the dev user cannot read ingestion
     jobs). `upload_eval run --upload-id` reuses an upload.
-- Next: step 10 (the report), in plan mode, when the human says so.
+- Cycle 2 step 10 (report): DONE on 2026-11-01 (single agent), pushed straight to `main` at the human's request. Plan: `C:\Users\muham\.claude\plans\plan-to-build-the-sequential-pearl.md`.
+  - `REPORT.md` (repo root, new): the full evaluation report in the README's style (Title Case, résumé voice,
+    Problem / Cause / Solution / Result), every number from `runs/`.
+  - `README.md` updated for Cycle 2 in the human's own structure and style (the human's PR #11 rewrite is the model;
+    the human said Claude's first README did not match their style).
+  - `datasheet-rag/runs/demo_script.md`: shot list; the human records the demo.
+  - The human makes the final charts and diagrams; Claude gave a figure brief and left Markdown tables and a Mermaid
+    diagram in place.
+  - Billing total $4.95 (read by the human on 2026-10-29), now in both files.
+  - The human's own edits (2026-10-29): `README.md` cut to a shorter version (Overview, Results, Architecture,
+    Tech Stack, Custom vs AWS Managed, Feedback Loop, Limitations, Future Work, Getting Started); both diagrams are
+    the human's images, `docs/architecture.png` (now with the feedback band) and `docs/Deployment.png` (replaces the
+    Mermaid block in both files; the README link was fixed to the file's capital D, since GitHub paths are
+    case-sensitive). `REPORT.md` shows both images.
+  - No demo GIF (the human's choice, 2026-11-01): the README header and the report's "Web Interface" section show
+    `docs/ui.png`, retaken on 2026-11-01 from the live site (one cached ask, about $0.0003). Teardown (step 11) is
+    next.
 - Plan change on 2026-10-23 (the human's decisions), replacing the 2026-10-22 order below:
   - Step 8 builds the **whole** KB pipeline, start to finish, identical to our hosted one: the same page with a **toggle** (Ours / Knowledge Base) and the same way of asking; only the retrieval and generation path changes. Then both pipelines are tested on the 49 questions and the results saved. That is the clean comparison.
   - Step 9 then adds two features to **both** pipelines, **upload first, then feedback**: 9a a user can upload a PDF, which is ingested, embedded and ready to ask about; 9b the human-approved feedback loop. 9c tests both pipelines again (the 49 for regressions, plus upload and correction cases).
