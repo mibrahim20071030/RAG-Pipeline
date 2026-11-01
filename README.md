@@ -29,8 +29,6 @@ Evaluated on 49 hand-checked questions, 43 with an answer in the datasheets and 
 
 ![Deployment on AWS: CloudFront, API Gateway and Lambda in front of DynamoDB, Aurora Serverless v2 and a Bedrock Knowledge Base, with an S3-triggered ingest path for uploads](docs/Deployment.png)
 
-Aurora pauses when idle, and a daily request cap in DynamoDB is checked before anything wakes the database. The review endpoints sit behind a Cognito JWT authorizer.
-
 ## Tech Stack
 
 | Component | Technology |
