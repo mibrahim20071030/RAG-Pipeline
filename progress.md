@@ -189,7 +189,45 @@ Cycle 2 (deploy, UI, report):
 - [x] 9c. Both pipelines tested again. Done on 2026-10-28; PR #24 merged.
 - [x] 10. Evaluation report and README. Done on 2026-11-01; no demo GIF (the human's choice), the README shows a
   fresh screenshot of the live site instead.
-- [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped.
+- [x] 10b. Before the LinkedIn post: `API_DAILY_ASK_LIMIT` 150 and `KB_DAILY_ASK_LIMIT` 300 in the Lambda (checked
+  2026-11-10), `/api/ask` throttle rate 0.5, burst 10 (set by the human; the dev user cannot read API Gateway).
+- [ ] 10c. After the LinkedIn traffic: put both caps back to 50 and the `/api/ask` throttle back to rate 0.05, burst 3.
+- [ ] 11. Teardown checklist (including the Knowledge Base and feedback-loop resources), then confirm in Billing that spend has stopped. Wait until the LinkedIn traffic is over.
+
+## 2026-11-10 — Session 31: getting ready for LinkedIn traffic
+
+- The human plans a LinkedIn post and asked about raising the Lambda variables so the site does not fail under load.
+- Discussed only; nothing changed in AWS or in code. Checked the cap settings in `rag/config.py`.
+- Finding: the tightest limit is the Cohere Rerank quota (3 a minute, not adjustable). It allows about 3 new questions
+  a minute on the Custom pipeline whatever the Lambda settings are. Over it, people get a 429 "busy" and their cap
+  place goes back. The AWS managed side has no reranker limit (Retrieve 600, Nova Lite 100 a minute), but it shares
+  the `/api/ask` throttle (0.05 a second, burst 3). Lambda concurrency (10) is not the limit at about 1 s a request.
+- Recommended: ours cap 50 to about 150 (at most about $0.60 a day), KB cap 50 to about 300 (about $0.36 a day), and
+  the route throttle to about 0.5 / burst 10. The largest cost under steady traffic is Aurora staying awake, about
+  $1.50–3 a day. `DEMO_ENABLED=false` is the off switch.
+- Optional, not decided: when the reranker is throttled, answer in hybrid search order instead of a 429. It needs its
+  own plan and a note in the README, because it changes the frozen setup under load.
+- Done by the human: Lambda `API_DAILY_ASK_LIMIT` 150, `KB_DAILY_ASK_LIMIT` 300 (read back with boto3:
+  150, 300, `DEMO_ENABLED` true, uploads 5); `/api/ask` throttle rate 0.5, burst 10.
+- Problem: the throttle could not be read back. Why: the dev user has no `apigateway` read permission (on purpose,
+  least privilege). Fix: the human can check it in CloudShell with `aws apigatewayv2 get-stage`.
+- Page (`web/index.html`): a throttling 429 on the Custom pipeline now says the reranker allows 3 questions a minute
+  and suggests AWS managed (`askFailure`, `RERANK_BUSY`); reworded at the human's request to "Sorry, the Custom
+  pipeline is busy right now. Try again in a minute, or switch to AWS managed.". The daily-limit 429 and the KB side are unchanged. Page
+  only, so no Lambda redeploy; it needs an S3 upload and a CloudFront invalidation. Checks pass (1,132, 212 skipped).
+- The human uploaded the page and invalidated it. Pre-post checks through `SITE_URL` (all passed, about $0.0015):
+  served page equals the local file; http redirects 301 to https; all 15 `limits` refusals as before; 12 empty asks
+  at once all got 400, none throttled; KB ask 200 in 2.1 s citing LM35 page 4; ours 200 in 5.0 s citing LM35 page 4;
+  the page's `askFailure` run in Node on simulated responses gave the new message only for a throttled ask on ours.
+- Problem: the first ask on ours got a 503 after 22.7 s. Why: Aurora was paused and resuming took longer than the
+  Lambda's 22 s connect timeout. Fix: none needed; asked again and it answered. A first visitor after a quiet spell
+  can see the "waking up" message once.
+- At the human's request, a throttled ask on the AWS managed side now says "Sorry, the AWS managed pipeline is busy
+  right now. Try again in a minute." (`KB_BUSY`), instead of the API's reranker message. Checked in Node; page tests
+  pass. The human uploaded and invalidated it; the live page equals the local file, its own code gives both busy
+  messages in Node, and the 15 `limits` refusals pass (free).
+- Open: the human's choice on the numbers and the fallback; a CloudShell command for the throttle if wanted; step 11
+  after the traffic dies down.
 
 ## 2026-11-01 — Session 30: README finished and step 10 published
 

@@ -466,6 +466,15 @@ details.details summary:hover { color: var(--text-muted); }
     if (status >= 500) return { message: BUSY, retry };
     return { message: (data && data.message) || `The server answered ${status}.`, retry };
   }
+  // A throttled ask on our pipeline is almost always the reranker's quota (3 a minute); the AWS managed side has none.
+  const RERANK_BUSY = "Sorry, the Custom pipeline is busy right now. Try again in a minute, or switch to AWS managed.";
+  const KB_BUSY = "Sorry, the AWS managed pipeline is busy right now. Try again in a minute.";
+  function askFailure(status, data, payload) {
+    const result = failure(status, data);
+    const throttled = status === 429 && !(data && data.limit === "daily");
+    if (throttled) result.message = payload.pipeline === "kb" ? KB_BUSY : RERANK_BUSY;
+    return result;
+  }
 
   // ---------- uploading a PDF (step 9a) ----------
   const uploadInput = document.getElementById("upload-file");
@@ -617,7 +626,7 @@ details.details summary:hover { color: var(--text-muted); }
       });
       const data = await readJson(response);
       if (!response.ok || !data) {
-        const { message, retry } = failure(response.ok ? 502 : response.status, data);
+        const { message, retry } = askFailure(response.ok ? 502 : response.status, data, payload);
         if (response.status === 400 && data && data.error) { setError(data.error); show(intro); box.focus(); }
         else show(errorPanel(message, retry ? () => ask(lastPayload) : null));
       } else {
